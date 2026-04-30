@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, addDoc, getDocs } from 'firebase/firestore';
+import { collection, addDoc, getDocs, serverTimestamp, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { School as SchoolType, Course as CourseType, ResponsibleCategory } from '../types';
 import { motion } from 'motion/react';
@@ -8,6 +8,7 @@ import { CheckCircle2, GraduationCap, MapPin, ArrowRight } from 'lucide-react';
 export default function LandingPage() {
   const [schools, setSchools] = useState<SchoolType[]>([]);
   const [courses, setCourses] = useState<CourseType[]>([]);
+  const [availableCourses, setAvailableCourses] = useState<CourseType[]>([]);
   const [selectedSchool, setSelectedSchool] = useState('');
   const [selectedCourse, setSelectedCourse] = useState('');
   const [selectedGrade, setSelectedGrade] = useState('');
@@ -40,6 +41,28 @@ export default function LandingPage() {
     fetchData();
   }, []);
 
+  // Filter courses whenever selectedSchool changes
+  useEffect(() => {
+    if (!selectedSchool) {
+      setAvailableCourses([]);
+      return;
+    }
+
+    const school = schools.find(s => s.id === selectedSchool);
+    if (school && school.courseIds) {
+      const filtered = courses.filter(c => school.courseIds?.includes(c.id));
+      setAvailableCourses(filtered);
+    } else {
+      // If no mapping yet, show all or none? 
+      // User said: "eu preciso ligar os cursos as unidades/ escolas"
+      // So if not linked, maybe none are available.
+      setAvailableCourses([]);
+    }
+    
+    setSelectedCourse('');
+    setSelectedGrade('');
+  }, [selectedSchool, schools, courses]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.consent) return;
@@ -50,7 +73,7 @@ export default function LandingPage() {
         schoolId: selectedSchool,
         courseId: selectedCourse,
         grade: selectedGrade,
-        createdAt: new Date(),
+        createdAt: serverTimestamp(),
         status: 'Pendente'
       });
       setSuccess(true);
@@ -223,7 +246,7 @@ export default function LandingPage() {
                                         className="w-full px-3 py-2 text-sm rounded border border-slate-200 bg-slate-50 outline-none focus:border-sesi-blue transition-all"
                                     >
                                         <option value="">Selecione o nível</option>
-                                        {courses.map(c => (
+                                        {availableCourses.map(c => (
                                             <option key={c.id} value={c.id}>{c.name}</option>
                                         ))}
                                     </select>

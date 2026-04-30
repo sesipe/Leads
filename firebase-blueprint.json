@@ -7,7 +7,12 @@
       "properties": {
         "name": { "type": "string", "description": "Name of the school" },
         "city": { "type": "string", "description": "City where the school is located" },
-        "active": { "type": "boolean", "description": "Whether the school is currently accepting expressions of interest" }
+        "active": { "type": "boolean", "description": "Whether the school is currently accepting expressions of interest" },
+        "courseIds": {
+          "type": "array",
+          "description": "List of course IDs available at this school",
+          "items": { "type": "string" }
+        }
       },
       "required": ["name", "city", "active"]
     },
@@ -16,15 +21,20 @@
       "description": "Educational course offered by SESI",
       "type": "object",
       "properties": {
-        "name": { "type": "string", "description": "Name of the course (e.g., Ensino Fundamental)" },
-        "description": { "type": "string", "description": "Brief description of the course" },
+        "name": { "type": "string", "description": "Displayed name of the course" },
+        "type": { 
+          "type": "string", 
+          "enum": ["Ensino Fundamental I", "Ensino Fundamental II", "Ensino Médio Regular", "Ensino Médio Técnico"],
+          "description": "Category of the course" 
+        },
         "levels": {
           "type": "array",
           "description": "List of grades/series available for this course",
           "items": { "type": "string" }
-        }
+        },
+        "itinerary": { "type": "string", "description": "Technical itinerary or specific name" }
       },
-      "required": ["name", "levels"]
+      "required": ["name", "type", "levels"]
     },
     "Lead": {
       "title": "Lead",

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, getDocs, query, orderBy, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { Lead, LeadStatus } from '../../types';
+import { Lead, LeadStatus, School, Course } from '../../types';
 import { Search, Filter, Download, MoreHorizontal, Mail, MessageCircle, Trash2, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -9,26 +9,45 @@ import { cn } from '../../lib/utils';
 
 export default function AdminLeads() {
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [schools, setSchools] = useState<School[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<LeadStatus | 'Todos'>('Todos');
 
   useEffect(() => {
-    fetchLeads();
+    fetchData();
   }, []);
 
-  async function fetchLeads() {
+  async function fetchData() {
     setLoading(true);
-    const q = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
-    const snap = await getDocs(q);
-    const fetchedLeads = snap.docs.map(doc => ({ 
-      id: doc.id, 
-      ...doc.data(),
-      createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : new Date(doc.data().createdAt)
-    } as Lead));
-    setLeads(fetchedLeads);
-    setLoading(false);
+    try {
+      const q = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
+      const [leadsSnap, schoolsSnap, coursesSnap] = await Promise.all([
+        getDocs(q),
+        getDocs(collection(db, 'schools')),
+        getDocs(collection(db, 'courses'))
+      ]);
+
+      setSchools(schoolsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as School)));
+      setCourses(coursesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Course)));
+
+      const fetchedLeads = leadsSnap.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : new Date(doc.data().createdAt)
+      } as Lead));
+      
+      setLeads(fetchedLeads);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   }
+
+  const getSchoolName = (id: string) => schools.find(s => s.id === id)?.name || id;
+  const getCourseName = (id: string) => courses.find(c => c.id === id)?.name || id;
 
   const updateStatus = async (id: string, newStatus: LeadStatus) => {
     try {
@@ -50,8 +69,12 @@ export default function AdminLeads() {
   };
 
   const filteredLeads = leads.filter(l => {
+    const schoolName = getSchoolName(l.schoolId);
+    const courseName = getCourseName(l.courseId);
     const matchesSearch = l.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          l.email.toLowerCase().includes(searchTerm.toLowerCase());
+                          l.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          schoolName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          courseName.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'Todos' || l.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -59,7 +82,7 @@ export default function AdminLeads() {
   const exportCSV = () => {
     const headers = ['Nome', 'Categoria', 'E-mail', 'WhatsApp', 'Escola', 'Curso', 'Série', 'Data', 'Status'];
     const rows = filteredLeads.map(l => [
-      l.name, l.category, l.email, l.whatsapp, l.schoolId, l.courseId, l.grade, 
+      l.name, l.category, l.email, l.whatsapp, getSchoolName(l.schoolId), getCourseName(l.courseId), l.grade, 
       format(l.createdAt, 'dd/MM/yyyy HH:mm'), l.status
     ]);
     const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
@@ -94,10 +117,10 @@ export default function AdminLeads() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
           <input 
             type="text"
-            placeholder="Buscar por nome ou e-mail..."
+            placeholder="Buscar por nome, e-mail, curso ou unidade..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded bg-slate-50 outline-none focus:border-sesi-blue transition-all text-xs"
+            className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded bg-slate-50 outline-none focus:border-sesi-blue transition-all text-xs font-bold"
           />
         </div>
         <div className="flex items-center gap-2 w-full md:w-auto">
@@ -126,7 +149,7 @@ export default function AdminLeads() {
             <thead className="bg-slate-50/80 border-b border-slate-100 font-bold text-[9px] text-slate-400 uppercase tracking-widest">
               <tr>
                 <th className="px-6 py-4">Responsável</th>
-                <th className="px-6 py-4">Unidade / Série</th>
+                <th className="px-6 py-4">Unidade / Nível / Série</th>
                 <th className="px-6 py-4">Data Registro</th>
                 <th className="px-6 py-4">Status</th>
                 <th className="px-6 py-4">Ações</th>
@@ -134,7 +157,7 @@ export default function AdminLeads() {
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
               {loading ? (
-                <tr><td colSpan={5} className="py-20 text-center text-slate-400 italic">Buscando leads...</td></tr>
+                <tr><td colSpan={5} className="py-20 text-center text-slate-400 italic">Buscando informações...</td></tr>
               ) : filteredLeads.length === 0 ? (
                 <tr><td colSpan={5} className="py-20 text-center text-slate-400 italic">Nenhum lead encontrado.</td></tr>
               ) : filteredLeads.map((lead) => (
@@ -144,15 +167,15 @@ export default function AdminLeads() {
                     <div className="text-[10px] text-slate-400 font-medium uppercase tracking-tight">{lead.category} • {lead.email}</div>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="font-bold text-sesi-blue text-[11px]">{lead.schoolId}</div>
-                    <div className="text-[10px] text-slate-500 font-medium">{lead.grade}</div>
+                    <div className="font-bold text-sesi-blue text-[11px] uppercase tracking-tighter">{getSchoolName(lead.schoolId)}</div>
+                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{getCourseName(lead.courseId)} <span className="text-slate-300 mx-1">•</span> {lead.grade}</div>
                   </td>
-                  <td className="px-6 py-4 text-[10px] text-slate-400 font-bold">
+                  <td className="px-6 py-4 text-[10px] text-slate-400 font-bold italic">
                     {format(lead.createdAt, 'dd/MM/yyyy HH:mm', { locale: ptBR })}
                   </td>
                   <td className="px-6 py-4">
                     <span className={cn(
-                        "px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight shadow-sm border",
+                        "px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-tight shadow-sm border",
                         lead.status === 'Pendente' && "bg-amber-50 text-amber-700 border-amber-100",
                         lead.status === 'Contatado' && "bg-blue-50 text-blue-700 border-blue-100",
                         lead.status === 'Matriculado' && "bg-green-50 text-green-700 border-green-100",
@@ -168,20 +191,20 @@ export default function AdminLeads() {
                         target="_blank" 
                         rel="noreferrer"
                         className="text-green-600 font-bold hover:scale-110 transition-transform"
-                        title="WhatsApp"
+                        title="Canal WhatsApp"
                       >
                         <MessageCircle size={18} />
                       </a>
                       <select 
                         onChange={(e) => updateStatus(lead.id, e.target.value as LeadStatus)}
-                        className="text-[10px] border-none bg-transparent focus:ring-0 text-slate-400 hover:text-sesi-blue font-bold uppercase tracking-tighter"
-                        title="Alterar Status"
+                        className="text-[9px] border-none bg-transparent focus:ring-0 text-slate-400 hover:text-sesi-blue font-bold uppercase tracking-tighter cursor-pointer"
+                        title="Alterar Status Operacional"
                         value={lead.status}
                       >
-                        <option value="Pendente">Marcar Pendente</option>
-                        <option value="Contatado">Marcar Contatado</option>
-                        <option value="Matriculado">Confirmar Matrícula</option>
-                        <option value="Desistente">Marcar Desistência</option>
+                        <option value="Pendente">Aguardando</option>
+                        <option value="Contatado">Contatado</option>
+                        <option value="Matriculado">Efetivado</option>
+                        <option value="Desistente">Desistência</option>
                       </select>
                       <button 
                         onClick={() => deleteLead(lead.id)}

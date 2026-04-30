@@ -6,13 +6,17 @@ export interface School {
   name: string;
   city: string;
   active: boolean;
+  courseIds?: string[];
 }
+
+export type CourseType = 'Ensino Fundamental I' | 'Ensino Fundamental II' | 'Ensino Médio Regular' | 'Ensino Médio Técnico';
 
 export interface Course {
   id: string;
   name: string;
-  description?: string;
+  type: CourseType;
   levels: string[];
+  itinerary?: string;
 }
 
 export interface Lead {

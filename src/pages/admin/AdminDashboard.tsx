@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { Lead } from '../../types';
-import { Users, School, GraduationCap, TrendingUp } from 'lucide-react';
+import { Lead, School } from '../../types';
+import { Users, School as SchoolIcon, GraduationCap, TrendingUp } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { format, subDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -10,34 +10,48 @@ import { cn } from '../../lib/utils';
 
 export default function AdminDashboard() {
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [schools, setSchools] = useState<School[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function fetchLeads() {
-      const q = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
-      const snap = await getDocs(q);
-      const fetchedLeads = snap.docs.map(doc => ({ 
-        id: doc.id, 
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : new Date(doc.data().createdAt)
-      } as Lead));
-      setLeads(fetchedLeads);
-      setLoading(false);
+    async function fetchData() {
+      try {
+        const qLeads = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
+        const [leadsSnap, schoolsSnap] = await Promise.all([
+          getDocs(qLeads),
+          getDocs(collection(db, 'schools'))
+        ]);
+
+        setSchools(schoolsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as School)));
+
+        const fetchedLeads = leadsSnap.docs.map(doc => ({ 
+          id: doc.id, 
+          ...doc.data(),
+          createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : new Date(doc.data().createdAt)
+        } as Lead));
+        
+        setLeads(fetchedLeads);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
     }
-    fetchLeads();
+    fetchData();
   }, []);
 
-  if (loading) return <div className="h-full flex items-center justify-center">Carregando métricas...</div>;
+  if (loading) return <div className="h-full flex items-center justify-center p-20 uppercase text-[10px] font-bold text-slate-400 animate-pulse">Calculando métricas de rede...</div>;
 
   const totalLeads = leads.length;
   
   // Aggregate by school
   const schoolStats = leads.reduce((acc: any, lead) => {
-    acc[lead.schoolId] = (acc[lead.schoolId] || 0) + 1;
+    const schoolName = schools.find(s => s.id === lead.schoolId)?.name || lead.schoolId;
+    acc[schoolName] = (acc[schoolName] || 0) + 1;
     return acc;
   }, {});
 
-  const schoolChartData = Object.entries(schoolStats).map(([id, count]) => ({ id, count }));
+  const schoolChartData = Object.entries(schoolStats).map(([name, count]) => ({ name, count }));
 
   // Aggregate by day for the last 7 days
   const last7Days = Array.from({ length: 7 }).map((_, i) => {
@@ -69,7 +83,7 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard title="Captação Total" value={totalLeads} icon={Users} color="blue" />
         <StatCard title="Novas 24h" value={dailyStats[dailyStats.length - 1]?.count || 0} icon={TrendingUp} color="green" />
-        <StatCard title="Unidades Ativas" value={leads.map(l => l.schoolId).filter((v, i, a) => a.indexOf(v) === i).length} icon={School} color="purple" />
+        <StatCard title="Unidades Ativas" value={schools.filter(s => s.active).length} icon={SchoolIcon} color="purple" />
         <StatCard title="Engajamento" value="78%" icon={GraduationCap} color="orange" />
       </div>
 
@@ -103,9 +117,9 @@ export default function AdminDashboard() {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={schoolChartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="id" hide />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 8, fill: '#94a3b8', fontWeight: 700 }} />
                 <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }} />
-                <Tooltip cursor={{ fill: '#f8fafc' }} />
+                <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ fontSize: '10px', borderRadius: '8px', border: 'none' }} />
                 <Bar dataKey="count" fill="#da291c" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

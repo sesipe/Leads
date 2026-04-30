@@ -1,12 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default deny
+    // 0. Default deny
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Helper functions
+    // --- PHASE 3: Primitive Definition ---
     function isSignedIn() {
       return request.auth != null;
     }
@@ -31,50 +31,76 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // Validation for Lead
+    // --- PHASE 4: Validation Helpers ---
+
     function isValidLead(data) {
-      return data.keys().hasAll(['name', 'category', 'email', 'whatsapp', 'schoolId', 'courseId', 'grade', 'createdAt', 'status'])
-        && data.keys().size() == 9
-        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+      return data.keys().hasAll(['name', 'category', 'email', 'whatsapp', 'schoolId', 'courseId', 'grade', 'createdAt', 'status', 'consent'])
+        && data.keys().size() == 10
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
         && data.category in ['Pai', 'Mãe', 'Responsável Legal', 'Outro']
         && data.email is string && data.email.size() <= 100 && data.email.matches('.+@.+\\..+')
-        && data.whatsapp is string && data.whatsapp.size() >= 10 && data.whatsapp.size() <= 20
-        && data.schoolId is string && data.schoolId.size() <= 128
-        && data.courseId is string && data.courseId.size() <= 128
-        && data.grade is string && data.grade.size() > 0 && data.grade.size() <= 50
+        && data.whatsapp is string && data.whatsapp.size() >= 10 && data.whatsapp.size() <= 30
+        && isValidId(data.schoolId)
+        && isValidId(data.courseId)
+        && data.grade is string && data.grade.size() > 0 && data.grade.size() <= 100
         && data.createdAt == request.time
-        && data.status == 'Pendente';
+        && data.status in ['Pendente', 'Contatado', 'Matriculado', 'Desistente']
+        && data.consent == true;
     }
+
+    function isValidSchool(data) {
+      return data.keys().hasAll(['name', 'city', 'active'])
+        && data.name is string && data.name.size() <= 200
+        && data.city is string && data.city.size() <= 200
+        && data.active is bool
+        // optional courseIds
+        && (!data.keys().hasAny(['courseIds']) || (data.courseIds is list && data.courseIds.size() <= 100));
+    }
+
+    function isValidCourse(data) {
+      return data.keys().hasAll(['name', 'type', 'levels'])
+        && data.name is string && data.name.size() <= 200
+        && data.type in ['Ensino Fundamental I', 'Ensino Fundamental II', 'Ensino Médio Regular', 'Ensino Médio Técnico']
+        && data.levels is list && data.levels.size() <= 20
+        // optional itinerary
+        && (!data.keys().hasAny(['itinerary']) || (data.itinerary == null || (data.itinerary is string && data.itinerary.size() <= 200)));
+    }
+
+    // --- PHASE 5: Implementation ---
 
     // Schools
     match /schools/{schoolId} {
-      allow read: if true; // Publicly readable for the form
-      allow write: if isAdmin();
+      allow read: if true;
+      allow create: if isAdmin() && isValidSchool(incoming());
+      allow update: if isAdmin() && isValidSchool(incoming());
+      allow delete: if isAdmin();
     }
 
     // Courses
     match /courses/{courseId} {
-      allow read: if true; // Publicly readable for the form
-      allow write: if isAdmin();
+      allow read: if true;
+      allow create: if isAdmin() && isValidCourse(incoming());
+      allow update: if isAdmin() && isValidCourse(incoming());
+      allow delete: if isAdmin();
     }
 
     // Leads
     match /leads/{leadId} {
       allow create: if isValidLead(incoming());
-      allow list, get, update, delete: if isAdmin();
+      allow list: if isAdmin();
+      allow get: if isAdmin();
+      allow update: if isAdmin() && isValidLead(incoming());
+      allow delete: if isAdmin();
     }
 
-    // Admins collection
+    // Admins
     match /admins/{adminId} {
       allow read: if isSignedIn() && (request.auth.uid == adminId || isAdmin());
-      allow write: if isAdmin(); // Admins can manage other admins
+      allow write: if isAdmin();
     }
 
     // Settings
     match /settings/{settingsId} {
-      allow read: if true; // Publicly readable to get templates if needed (or maybe just read if admin?)
-      // Actually, templates might be needed by the client to show what will be sent, but normally sent by server.
-      // Let's keep it restricted to Admin for now.
       allow read, write: if isAdmin();
     }
   }
