@@ -131,7 +131,9 @@ export default function AdminSchools() {
     try {
       let displayName = courseBuilder.type as string;
       if (courseBuilder.type === 'Ensino Médio') {
-        displayName = courseBuilder.itinerary ? `Técnico em ${courseBuilder.itinerary}` : 'Ensino Médio Regular';
+        const typePrefix = courseBuilder.itinerary ? 'Técnico em' : 'Ensino Médio';
+        const suffix = courseBuilder.itinerary ? courseBuilder.itinerary : 'Regular';
+        displayName = `${typePrefix} ${suffix}`;
       }
 
       // Check if this specific configuration already exists in our registry
@@ -431,7 +433,8 @@ export default function AdminSchools() {
                                      {COURSE_TYPES.map(type => (
                                        <button 
                                           key={type}
-                                          onClick={() => setCourseBuilder({...courseBuilder, type, itinerary: ''})}
+                                          type="button"
+                                          onClick={() => setCourseBuilder({...courseBuilder, type, itinerary: '', selectedLevels: DEFAULT_GRADES[type]})}
                                           className={cn(
                                             "px-4 py-4 rounded-2xl border-2 text-[10px] font-black uppercase transition-all text-center leading-tight",
                                             courseBuilder.type === type ? "bg-sesi-blue border-sesi-blue text-white shadow-lg" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"
@@ -443,15 +446,56 @@ export default function AdminSchools() {
                                   </div>
                                </div>
 
-                               {/* Part B: Escolha as Séries (Multiselect) */}
-                               <div className="space-y-3">
+                               {/* Part B: Escolha o Itinerário (Somente Ensino Médio) */}
+                               {courseBuilder.type === 'Ensino Médio' && (
+                                 <div className="space-y-3 pt-4 border-t border-slate-200 border-dashed animate-in slide-in-from-top-2">
+                                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
+                                       <span className="w-5 h-5 rounded-full bg-sesi-red text-white flex items-center justify-center text-[10px]">2</span> Categoria do Ensino Médio
+                                    </label>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                       <button 
+                                          type="button"
+                                          onClick={() => setCourseBuilder({...courseBuilder, itinerary: ''})}
+                                          className={cn(
+                                            "px-4 py-3 rounded-2xl border-2 text-[10px] font-black uppercase transition-all text-left",
+                                            !courseBuilder.itinerary ? "bg-sesi-red border-sesi-red text-white shadow-lg" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"
+                                          )}
+                                       >
+                                          Regular (Base Nacional Comum)
+                                       </button>
+                                       <div className="relative group">
+                                          <select 
+                                            value={courseBuilder.itinerary}
+                                            onChange={(e) => setCourseBuilder({...courseBuilder, itinerary: e.target.value})}
+                                            className={cn(
+                                              "w-full px-4 py-3 rounded-2xl border-2 text-[10px] font-black uppercase appearance-none outline-none transition-all",
+                                              courseBuilder.itinerary ? "bg-sesi-red border-sesi-red text-white shadow-lg" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200 focus:border-sesi-red"
+                                            )}
+                                          >
+                                            <option value="" className="text-slate-800">Selecione um Itinerário Técnico...</option>
+                                            {TECHNICAL_ITINERARIES.map(it => (
+                                              <option key={it} value={it} className="text-slate-800">Técnico em {it}</option>
+                                            ))}
+                                          </select>
+                                          {!courseBuilder.itinerary && <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-300">▼</div>}
+                                       </div>
+                                    </div>
+                                 </div>
+                               )}
+
+                               {/* Part C: Escolha as Séries */}
+                               <div className="space-y-3 pt-4 border-t border-slate-200 border-dashed">
                                   <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
-                                     <span className="w-5 h-5 rounded-full bg-slate-900 text-white flex items-center justify-center text-[10px]">2</span> Séries Disponíveis no Nível
+                                     <span className="w-5 h-5 rounded-full bg-slate-900 text-white flex items-center justify-center text-[10px]">
+                                        {courseBuilder.type === 'Ensino Médio' ? '3' : '2'}
+                                     </span> 
+                                     Séries Disponíveis para este {courseBuilder.itinerary ? 'Itinerário' : 'Nível'}
                                   </label>
                                   <div className="flex flex-wrap gap-2">
                                      {DEFAULT_GRADES[courseBuilder.type].map(grade => (
                                        <button 
                                           key={grade}
+                                          type="button"
                                           onClick={() => {
                                              if (courseBuilder.selectedLevels.includes(grade)) {
                                                 setCourseBuilder(prev => ({ ...prev, selectedLevels: prev.selectedLevels.filter(g => g !== grade) }));
@@ -461,54 +505,24 @@ export default function AdminSchools() {
                                           }}
                                           className={cn(
                                             "px-4 py-2 rounded-xl border text-[10px] font-bold uppercase transition-all",
-                                            courseBuilder.selectedLevels.includes(grade) ? "bg-slate-800 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-400"
+                                            courseBuilder.selectedLevels.includes(grade) ? "bg-slate-800 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-400 hover:border-slate-300"
                                           )}
                                        >
                                           {grade}
                                        </button>
                                      ))}
                                   </div>
+                                  <p className="text-[9px] text-slate-400 italic">Você pode criar ofertas individuais (ex: apenas 1º ano) para itinerários diferentes.</p>
                                </div>
-
-                               {/* Part C: Itinerário (Somente Ensino Médio) */}
-                               {courseBuilder.type === 'Ensino Médio' && (
-                                 <div className="space-y-3 pt-4 border-t border-slate-200 border-dashed">
-                                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
-                                       <span className="w-5 h-5 rounded-full bg-sesi-red text-white flex items-center justify-center text-[10px]">3</span> Selecione o Curso Técnico / Itinerário
-                                    </label>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                       <button 
-                                          onClick={() => setCourseBuilder({...courseBuilder, itinerary: ''})}
-                                          className={cn(
-                                            "px-4 py-3 rounded-2xl border-2 text-[10px] font-black uppercase transition-all text-left",
-                                            !courseBuilder.itinerary ? "bg-sesi-red border-sesi-red text-white shadow-lg" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"
-                                          )}
-                                       >
-                                          Regular (Ensino Médio Padrão)
-                                       </button>
-                                       {TECHNICAL_ITINERARIES.map(it => (
-                                          <button 
-                                            key={it}
-                                            onClick={() => setCourseBuilder({...courseBuilder, itinerary: it})}
-                                            className={cn(
-                                              "px-4 py-3 rounded-2xl border-2 text-[10px] font-black uppercase transition-all text-left",
-                                              courseBuilder.itinerary === it ? "bg-sesi-red border-sesi-red text-white shadow-lg" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"
-                                            )}
-                                          >
-                                             Técnico em {it}
-                                          </button>
-                                       ))}
-                                    </div>
-                                 </div>
-                               )}
 
                                <div className="pt-6">
                                   <button 
+                                    type="button"
                                     disabled={courseBuilder.selectedLevels.length === 0}
                                     onClick={findOrCreateCourseInOffer}
                                     className="w-full bg-slate-900 text-white py-4 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-black transition-all shadow-xl flex items-center justify-center gap-3 disabled:opacity-20"
                                   >
-                                     <Save size={18} /> Confirmar este Nível na Unidade
+                                     <PlusCircle size={18} /> Adicionar esta Oferta à Unidade
                                   </button>
                                </div>
                             </div>
