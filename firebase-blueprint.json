@@ -1,0 +1,75 @@
+{
+  "entities": {
+    "School": {
+      "title": "School",
+      "description": "A SESI school unit in Pernambuco",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the school" },
+        "city": { "type": "string", "description": "City where the school is located" },
+        "active": { "type": "boolean", "description": "Whether the school is currently accepting expressions of interest" }
+      },
+      "required": ["name", "city", "active"]
+    },
+    "Course": {
+      "title": "Course",
+      "description": "Educational course offered by SESI",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the course (e.g., Ensino Fundamental)" },
+        "description": { "type": "string", "description": "Brief description of the course" },
+        "levels": {
+          "type": "array",
+          "description": "List of grades/series available for this course",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["name", "levels"]
+    },
+    "Lead": {
+      "title": "Lead",
+      "description": "A person interested in enrolling a student",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the responsible person" },
+        "category": { "type": "string", "enum": ["Pai", "Mãe", "Responsável Legal", "Outro"], "description": "Relationship category" },
+        "email": { "type": "string", "format": "email", "description": "Contact email" },
+        "whatsapp": { "type": "string", "description": "Contact WhatsApp number" },
+        "schoolId": { "type": "string", "description": "ID of the school of interest" },
+        "courseId": { "type": "string", "description": "ID of the course of interest" },
+        "grade": { "type": "string", "description": "The specific grade/series desired" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the lead was created" },
+        "status": { "type": "string", "enum": ["Pendente", "Contatado", "Matriculado", "Desistente"], "description": "Current status of the lead" }
+      },
+      "required": ["name", "category", "email", "whatsapp", "schoolId", "courseId", "grade", "createdAt", "status"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Global application settings and message templates",
+      "type": "object",
+      "properties": {
+        "confirmationEmailTemplate": { "type": "string", "description": "Email message template" },
+        "confirmationWhatsappTemplate": { "type": "string", "description": "WhatsApp message template" }
+      },
+      "required": ["confirmationEmailTemplate", "confirmationWhatsappTemplate"]
+    }
+  },
+  "firestore": {
+    "schools": {
+      "schema": "School",
+      "description": "Collection of SESI schools"
+    },
+    "courses": {
+      "schema": "Course",
+      "description": "Collection of offered courses"
+    },
+    "leads": {
+      "schema": "Lead",
+      "description": "Collection of interested leads"
+    },
+    "settings": {
+      "schema": "Settings",
+      "description": "Application settings"
+    }
+  }
+}

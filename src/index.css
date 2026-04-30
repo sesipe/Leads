@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+@theme {
+  --color-sesi-blue: #004b93;
+  --color-sesi-red: #da291c;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-800 font-sans;
+  }
+}
