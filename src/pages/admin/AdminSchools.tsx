@@ -22,13 +22,12 @@ import {
 import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
-const COURSE_TYPES: CourseType[] = ['Ensino Fundamental I', 'Ensino Fundamental II', 'Ensino Médio Regular', 'Ensino Médio Técnico'];
+const COURSE_TYPES: CourseType[] = ['Ensino Fundamental – Anos Iniciais', 'Ensino Fundamental – Anos Finais', 'Ensino Médio'];
 
 const DEFAULT_GRADES: Record<CourseType, string[]> = {
-  'Ensino Fundamental I': ['1º Ano', '2º Ano', '3º Ano', '4º Ano', '5º Ano'],
-  'Ensino Fundamental II': ['6º Ano', '7º Ano', '8º Ano', '9º Ano'],
-  'Ensino Médio Regular': ['1ª Série', '2ª Série', '3ª Série'],
-  'Ensino Médio Técnico': ['1ª Série', '2ª Série', '3ª Série']
+  'Ensino Fundamental – Anos Iniciais': ['1º Ano', '2º Ano', '3º Ano', '4º Ano', '5º Ano'],
+  'Ensino Fundamental – Anos Finais': ['6º Ano', '7º Ano', '8º Ano', '9º Ano'],
+  'Ensino Médio': ['1º Ano', '2º Ano', '3º Ano']
 };
 
 const TECHNICAL_ITINERARIES = [
@@ -57,7 +56,7 @@ export default function AdminSchools() {
 
   // Course Form Structured (Template Creation)
   const [courseForm, setCourseForm] = useState({
-    type: 'Ensino Fundamental I' as CourseType,
+    type: 'Ensino Fundamental – Anos Iniciais' as CourseType,
     selectedLevels: [] as string[],
     itinerary: ''
   });
@@ -128,9 +127,9 @@ export default function AdminSchools() {
     if (!confirm('Deseja carregar a estrutura padrão de cursos (Fundamental I, II e Médio)?')) return;
     try {
       const coursesData: Omit<Course, 'id'>[] = [
-        { name: 'Ensino Fundamental I', type: 'Ensino Fundamental I', levels: ['1º Ano', '2º Ano', '3º Ano', '4º Ano', '5º Ano'] },
-        { name: 'Ensino Fundamental II', type: 'Ensino Fundamental II', levels: ['6º Ano', '7º Ano', '8º Ano', '9º Ano'] },
-        { name: 'Ensino Médio Regular', type: 'Ensino Médio Regular', levels: ['1ª Série', '2ª Série', '3ª Série'] }
+        { name: 'Ensino Fundamental – Anos Iniciais', type: 'Ensino Fundamental – Anos Iniciais', levels: ['1º Ano', '2º Ano', '3º Ano', '4º Ano', '5º Ano'] },
+        { name: 'Ensino Fundamental – Anos Finais', type: 'Ensino Fundamental – Anos Finais', levels: ['6º Ano', '7º Ano', '8º Ano', '9º Ano'] },
+        { name: 'Ensino Médio Regular', type: 'Ensino Médio', levels: ['1º Ano', '2º Ano', '3º Ano'] }
       ];
 
       for (const c of coursesData) {
@@ -144,7 +143,7 @@ export default function AdminSchools() {
     e.preventDefault();
     try {
       let name = courseForm.type as string;
-      if (courseForm.type === 'Ensino Médio Técnico' && courseForm.itinerary) {
+      if (courseForm.type === 'Ensino Médio' && courseForm.itinerary) {
         name = `Técnico em ${courseForm.itinerary}`;
       }
 
@@ -156,8 +155,8 @@ export default function AdminSchools() {
       });
       
       setCourseForm({
-        type: 'Ensino Fundamental I',
-        selectedLevels: DEFAULT_GRADES['Ensino Fundamental I'],
+        type: 'Ensino Fundamental – Anos Iniciais',
+        selectedLevels: DEFAULT_GRADES['Ensino Fundamental – Anos Iniciais'],
         itinerary: ''
       });
       fetchData();
@@ -252,16 +251,15 @@ export default function AdminSchools() {
                           </select>
                         </div>
 
-                        {courseForm.type === 'Ensino Médio Técnico' && (
+                        {courseForm.type === 'Ensino Médio' && (
                           <div className="space-y-1">
-                            <label className="text-[10px] font-bold uppercase text-slate-400">Itinerário Técnico</label>
+                            <label className="text-[10px] font-bold uppercase text-slate-400">Itinerário Técnico (Opcional)</label>
                             <select 
-                              required 
                               value={courseForm.itinerary} 
                               onChange={e => setCourseForm({...courseForm, itinerary: e.target.value})} 
                               className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50 outline-none focus:border-sesi-blue font-bold"
                             >
-                              <option value="">Selecione o Itinerário</option>
+                              <option value="">Apenas Regular</option>
                               {TECHNICAL_ITINERARIES.map(t => <option key={t} value={t}>{t}</option>)}
                             </select>
                           </div>

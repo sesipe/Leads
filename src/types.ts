@@ -9,7 +9,7 @@ export interface School {
   courseIds?: string[];
 }
 
-export type CourseType = 'Ensino Fundamental I' | 'Ensino Fundamental II' | 'Ensino Médio Regular' | 'Ensino Médio Técnico';
+export type CourseType = 'Ensino Fundamental – Anos Iniciais' | 'Ensino Fundamental – Anos Finais' | 'Ensino Médio';
 
 export interface Course {
   id: string;

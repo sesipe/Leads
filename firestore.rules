@@ -60,7 +60,7 @@ service cloud.firestore {
     function isValidCourse(data) {
       return data.keys().hasAll(['name', 'type', 'levels'])
         && data.name is string && data.name.size() <= 200
-        && data.type in ['Ensino Fundamental I', 'Ensino Fundamental II', 'Ensino Médio Regular', 'Ensino Médio Técnico']
+        && data.type in ['Ensino Fundamental – Anos Iniciais', 'Ensino Fundamental – Anos Finais', 'Ensino Médio']
         && data.levels is list && data.levels.size() <= 20
         // optional itinerary
         && (!data.keys().hasAny(['itinerary']) || (data.itinerary == null || (data.itinerary is string && data.itinerary.size() <= 200)));
