@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../providers/AuthProvider';
 import { LayoutDashboard, Users, School, Settings, LogOut, Menu, X } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { logout } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
 
