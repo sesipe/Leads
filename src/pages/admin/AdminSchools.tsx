@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { School, Course, CourseType } from '../../types';
 import { 
@@ -17,7 +17,10 @@ import {
   ArrowRight,
   Save,
   Wand2,
-  AlertCircle
+  AlertCircle,
+  GraduationCap,
+  PlusCircle,
+  X
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -38,7 +41,7 @@ const TECHNICAL_ITINERARIES = [
   'Jogos Digitais'
 ];
 
-type Step = 'identity' | 'offer' | 'review';
+type Step = 'identity' | 'structure' | 'review';
 
 export default function AdminSchools() {
   const [schools, setSchools] = useState<School[]>([]);
@@ -49,13 +52,13 @@ export default function AdminSchools() {
   const [isConfiguring, setIsConfiguring] = useState(false);
   const [activeStep, setActiveStep] = useState<Step>('identity');
   const [selectedSchoolId, setSelectedSchoolId] = useState<string | null>(null);
-  const [showTemplateManager, setShowTemplateManager] = useState(false);
 
   // Form states
   const [schoolForm, setSchoolForm] = useState({ name: '', city: '', active: true, courseIds: [] as string[] });
 
-  // Course Form Structured (Template Creation)
-  const [courseForm, setCourseForm] = useState({
+  // Course Builder Form (Internal state during wizard)
+  const [isAddingCourse, setIsAddingCourse] = useState(false);
+  const [courseBuilder, setCourseBuilder] = useState({
     type: 'Ensino Fundamental – Anos Iniciais' as CourseType,
     selectedLevels: [] as string[],
     itinerary: ''
@@ -66,12 +69,12 @@ export default function AdminSchools() {
   }, []);
 
   useEffect(() => {
-    // Reset levels when type changes
-    setCourseForm(prev => ({
+    // Sync default grades when type changes in builder
+    setCourseBuilder(prev => ({
       ...prev,
       selectedLevels: DEFAULT_GRADES[prev.type]
     }));
-  }, [courseForm.type]);
+  }, [courseBuilder.type]);
 
   async function fetchData() {
     setLoading(true);
@@ -121,471 +124,456 @@ export default function AdminSchools() {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const seedData = async () => {
-    if (!confirm('Deseja carregar a estrutura padrão de cursos (Fundamental I, II e Médio)?')) return;
+  // Logic to find or create a course matching the current builder configuration
+  const findOrCreateCourseInOffer = async () => {
     try {
-      const coursesData: Omit<Course, 'id'>[] = [
-        { name: 'Ensino Fundamental – Anos Iniciais', type: 'Ensino Fundamental – Anos Iniciais', levels: ['1º Ano', '2º Ano', '3º Ano', '4º Ano', '5º Ano'] },
-        { name: 'Ensino Fundamental – Anos Finais', type: 'Ensino Fundamental – Anos Finais', levels: ['6º Ano', '7º Ano', '8º Ano', '9º Ano'] },
-        { name: 'Ensino Médio Regular', type: 'Ensino Médio', levels: ['1º Ano', '2º Ano', '3º Ano'] }
-      ];
-
-      for (const c of coursesData) {
-        await addDoc(collection(db, 'courses'), c);
-      }
-      fetchData();
-    } catch (err) { console.error(err); }
-  };
-
-  const handleCreateTemplate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      let name = courseForm.type as string;
-      if (courseForm.type === 'Ensino Médio' && courseForm.itinerary) {
-        name = `Técnico em ${courseForm.itinerary}`;
+      let displayName = courseBuilder.type as string;
+      if (courseBuilder.type === 'Ensino Médio') {
+        displayName = courseBuilder.itinerary ? `Técnico em ${courseBuilder.itinerary}` : 'Ensino Médio Regular';
       }
 
-      await addDoc(collection(db, 'courses'), {
-        name,
-        type: courseForm.type,
-        levels: courseForm.selectedLevels,
-        itinerary: courseForm.itinerary || null
-      });
-      
-      setCourseForm({
-        type: 'Ensino Fundamental – Anos Iniciais',
-        selectedLevels: DEFAULT_GRADES['Ensino Fundamental – Anos Iniciais'],
-        itinerary: ''
-      });
-      fetchData();
-    } catch (err) { console.error(err); }
-  };
+      // Check if this specific configuration already exists in our registry
+      const existing = courses.find(c => 
+        c.type === courseBuilder.type && 
+        c.itinerary === (courseBuilder.itinerary || null) &&
+        JSON.stringify(c.levels.sort()) === JSON.stringify(courseBuilder.selectedLevels.sort())
+      );
 
-  const toggleCourseSelection = (courseId: string) => {
-    setSchoolForm(prev => {
-      const ids = prev.courseIds || [];
-      if (ids.includes(courseId)) {
-        return { ...prev, courseIds: ids.filter(id => id !== courseId) };
+      let courseId = '';
+      if (existing) {
+        courseId = existing.id;
       } else {
-        return { ...prev, courseIds: [...ids, courseId] };
+        const newDoc = await addDoc(collection(db, 'courses'), {
+          name: displayName,
+          type: courseBuilder.type,
+          levels: courseBuilder.selectedLevels,
+          itinerary: courseBuilder.itinerary || null
+        });
+        courseId = newDoc.id;
+        // Update local courses state
+        const freshCoursesSnap = await getDocs(collection(db, 'courses'));
+        setCourses(freshCoursesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Course)));
       }
-    });
+
+      // Link to school
+      setSchoolForm(prev => {
+        if (prev.courseIds.includes(courseId)) return prev;
+        return { ...prev, courseIds: [...prev.courseIds, courseId] };
+      });
+      setIsAddingCourse(false);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  const deleteItem = async (type: 'schools' | 'courses', id: string) => {
-    if (!confirm('Tem certeza? Isso pode afetar dados vinculados.')) return;
-    try {
-      await deleteDoc(doc(db, type, id));
-      fetchData();
-    } catch (err) { console.error(err); }
+  const removeCourseFromSchool = (id: string) => {
+    setSchoolForm(prev => ({
+      ...prev,
+      courseIds: prev.courseIds.filter(cid => cid !== id)
+    }));
   };
 
   const toggleSchoolActive = async (id: string, current: boolean) => {
     try {
       await updateDoc(doc(db, 'schools', id), { active: !current });
       setSchools(schools.map(s => s.id === id ? { ...s, active: !current } : s));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const deleteSchool = async (id: string) => {
+    if (!confirm('Excluir unidade? Leads associados podem perder o vínculo.')) return;
+    try {
+      await deleteDoc(doc(db, 'schools', id));
+      fetchData();
     } catch (err) { console.error(err); }
   };
 
   if (loading && !isConfiguring) return (
     <div className="h-[60vh] flex flex-col items-center justify-center space-y-4">
-      <div className="w-12 h-12 border-4 border-sesi-blue border-t-transparent rounded-full animate-spin"></div>
-      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest animate-pulse">Sincronizando Rede SESI...</p>
+      <div className="w-10 h-10 border-4 border-sesi-blue border-t-transparent rounded-full animate-spin"></div>
+      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest animate-pulse italic">Acessando Rede de Unidades...</p>
     </div>
   );
 
   return (
-    <div className="space-y-8 max-w-7xl animate-in fade-in duration-500 pb-20">
+    <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500 pb-20">
       
       {!isConfiguring ? (
         <>
-          {/* Dashboard View - List of units */}
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-slate-100 pb-6">
+          {/* Main List Management */}
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-slate-100 pb-8">
             <div>
-              <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight italic uppercase">Unidades Operacionais</h1>
-              <p className="text-xs text-slate-500 font-medium mt-1">Gerencie as escolas e suas ofertas educacionais</p>
+              <h1 className="text-3xl font-black text-slate-900 tracking-tighter uppercase italic">Administração de Unidades</h1>
+              <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">SESI Pernambuco • Configuração de Matrícula</p>
             </div>
-            <div className="flex gap-3">
-                <button 
-                  onClick={() => setShowTemplateManager(!showTemplateManager)}
-                  className="flex items-center gap-2 px-4 py-2 bg-white text-slate-600 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-50 transition-all border border-slate-200 shadow-sm"
-                >
-                  <Layers size={14} /> Templates {showTemplateManager ? '▲' : '▼'}
-                </button>
-                <button 
-                  onClick={() => startConfiguration()}
-                  className="flex items-center gap-2 px-6 py-2 bg-sesi-red text-white rounded-lg text-xs font-bold uppercase tracking-widest hover:brightness-110 shadow-lg shadow-sesi-red/20 transition-all"
-                >
-                  <Plus size={16} /> Nova Unidade
-                </button>
-            </div>
+            <button 
+              onClick={() => startConfiguration()}
+              className="flex items-center gap-3 px-8 py-3 bg-sesi-red text-white rounded-2xl text-[12px] font-black uppercase tracking-widest hover:brightness-110 shadow-2xl shadow-sesi-red/30 transition-all active:scale-95"
+            >
+                <Building2 size={18} /> Criar Nova Unidade
+            </button>
           </div>
-
-          <AnimatePresence>
-            {showTemplateManager && (
-              <motion.div 
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="grid lg:grid-cols-2 gap-8 bg-slate-50/50 p-6 rounded-2xl border border-dashed border-slate-300 mb-10">
-                  <div className="space-y-4">
-                    <div className="border-l-4 border-sesi-red pl-3">
-                      <h3 className="text-xs font-black uppercase text-slate-800 tracking-tighter">Criar Novo Template de Curso</h3>
-                      <p className="text-[10px] text-slate-400">Defina níveis para usar em várias unidades</p>
-                    </div>
-                    
-                    <form onSubmit={handleCreateTemplate} className="space-y-4 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold uppercase text-slate-400">Tipo de Nível</label>
-                          <select 
-                            required 
-                            value={courseForm.type} 
-                            onChange={e => setCourseForm({...courseForm, type: e.target.value as CourseType})} 
-                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50 outline-none focus:border-sesi-blue font-bold"
-                          >
-                            {COURSE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                          </select>
-                        </div>
-
-                        {courseForm.type === 'Ensino Médio' && (
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold uppercase text-slate-400">Itinerário Técnico (Opcional)</label>
-                            <select 
-                              value={courseForm.itinerary} 
-                              onChange={e => setCourseForm({...courseForm, itinerary: e.target.value})} 
-                              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50 outline-none focus:border-sesi-blue font-bold"
-                            >
-                              <option value="">Apenas Regular</option>
-                              {TECHNICAL_ITINERARIES.map(t => <option key={t} value={t}>{t}</option>)}
-                            </select>
-                          </div>
-                        )}
-
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-bold uppercase text-slate-400">Séries / Anos Incluídos</label>
-                          <div className="flex flex-wrap gap-2">
-                            {DEFAULT_GRADES[courseForm.type].map(grade => (
-                              <label key={grade} className="flex items-center gap-2 cursor-pointer group">
-                                <input 
-                                  type="checkbox" 
-                                  checked={courseForm.selectedLevels.includes(grade)}
-                                  onChange={(e) => {
-                                    if (e.target.checked) setCourseForm(prev => ({ ...prev, selectedLevels: [...prev.selectedLevels, grade] }));
-                                    else setCourseForm(prev => ({ ...prev, selectedLevels: prev.selectedLevels.filter(g => g !== grade) }));
-                                  }}
-                                  className="rounded border-slate-300 text-sesi-blue focus:ring-sesi-blue" 
-                                />
-                                <span className="text-[10px] font-medium text-slate-500 group-hover:text-slate-800 transition-colors">{grade}</span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-
-                        <button 
-                          className="w-full bg-slate-800 text-white py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-black transition-all flex items-center justify-center gap-2"
-                        >
-                          <Plus size={14} /> Registrar Template
-                        </button>
-                    </form>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center">
-                      <div className="border-l-4 border-slate-300 pl-3">
-                        <h3 className="text-xs font-black uppercase text-slate-800 tracking-tighter">Templates Disponíveis</h3>
-                        <p className="text-[10px] text-slate-400">Cursos registrados no sistema</p>
-                      </div>
-                      {courses.length === 0 && (
-                        <button onClick={seedData} className="text-[9px] font-bold uppercase text-sesi-red hover:underline">Carregar Padrões</button>
-                      )}
-                    </div>
-
-                    <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                      {courses.map(c => (
-                        <div key={c.id} className="group p-3 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl flex justify-between items-center transition-all">
-                          <div>
-                            <div className="font-bold text-slate-800 uppercase tracking-tighter text-[10px]">{c.name}</div>
-                            <div className="flex flex-wrap gap-1 mt-1">
-                              {c.levels.map(l => (
-                                <span key={l} className="text-[8px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded font-black uppercase tracking-tighter">{l}</span>
-                              ))}
-                            </div>
-                          </div>
-                          <button onClick={() => deleteItem('courses', c.id)} className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      ))}
-                      {courses.length === 0 && <p className="text-[10px] text-slate-400 italic text-center p-8">Nenhum template cadastrado.</p>}
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
 
           <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
             {schools.map(school => (
               <motion.div 
                 layout
                 key={school.id} 
-                className="group bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-sesi-blue/30 transition-all overflow-hidden"
+                className="group bg-white rounded-3xl border border-slate-200 shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all overflow-hidden"
               >
-                <div className="p-6">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="p-2 bg-slate-50 rounded-lg group-hover:bg-blue-50 transition-colors">
-                      <SchoolIcon className="text-slate-400 group-hover:text-sesi-blue" size={24} />
+                <div className="p-7">
+                  <div className="flex justify-between items-start mb-6">
+                    <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center group-hover:bg-blue-50 transition-colors">
+                      <SchoolIcon className="text-slate-400 group-hover:text-sesi-blue transition-colors" size={24} />
                     </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex gap-2">
                         <button 
                           onClick={() => toggleSchoolActive(school.id, school.active)}
                           className={cn(
-                            "px-2 py-1 rounded text-[8px] font-black uppercase tracking-widest border transition-all",
+                            "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all",
                             school.active ? "bg-green-50 text-green-600 border-green-100" : "bg-slate-100 text-slate-400 border-slate-200"
                           )}
                         >
-                          {school.active ? 'Ativa' : 'Pausada'}
+                          {school.active ? 'Ativa' : 'Pausa'}
                         </button>
-                        <button onClick={() => deleteItem('schools', school.id)} className="p-1.5 text-slate-300 hover:text-red-500 transition-colors">
-                          <Trash2 size={16} />
+                        <button onClick={() => deleteSchool(school.id)} className="p-2 text-slate-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                          <Trash2 size={18} />
                         </button>
                     </div>
                   </div>
                   
-                  <h3 className="text-xl font-black text-slate-900 tracking-tighter uppercase leading-none mb-1">{school.name}</h3>
-                  <p className="text-xs text-slate-400 font-bold uppercase tracking-widest italic">{school.city}</p>
+                  <h3 className="text-2xl font-black text-slate-900 tracking-tighter uppercase italic leading-none">{school.name}</h3>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-2">{school.city}, PE</p>
 
-                  <div className="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                       <div className="flex -space-x-2">
-                          {(school.courseIds?.slice(0, 3) || []).map(cid => (
-                            <div key={cid} title={courses.find(c => c.id === cid)?.name} className="w-6 h-6 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center text-[8px] font-bold text-slate-500">
-                               {courses.find(c => c.id === cid)?.name?.charAt(0) || '?'}
-                            </div>
-                          ))}
-                          {(school.courseIds?.length || 0) > 3 && (
-                            <div className="w-6 h-6 rounded-full border-2 border-white bg-slate-800 text-[8px] font-bold text-white flex items-center justify-center">
-                              +{(school.courseIds?.length || 0) - 3}
-                            </div>
-                          )}
-                       </div>
-                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter italic">
-                          {school.courseIds?.length || 0} níveis vinculados
+                  <div className="mt-8 pt-6 border-t border-slate-50 flex items-center justify-between">
+                    <div className="flex flex-col">
+                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest italic leading-none mb-1">Oferta Ativa</span>
+                       <span className="text-sm font-black text-sesi-blue uppercase tracking-tighter">
+                          {school.courseIds?.length || 0} Nível(is)
                        </span>
                     </div>
                     <button 
                       onClick={() => startConfiguration(school)}
-                      className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-sesi-blue hover:gap-2 transition-all"
+                      className="px-6 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-sm"
                     >
-                      Configurar <ChevronRight size={14} />
+                      Configurar
                     </button>
                   </div>
                 </div>
               </motion.div>
             ))}
-            
-            {/* Empty State / Add New Dash */}
-            <button 
-              onClick={() => startConfiguration()}
-              className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 hover:border-sesi-blue hover:text-sesi-blue transition-all group lg:min-h-[220px]"
-            >
-              <div className="w-12 h-12 rounded-full border-2 border-dashed border-slate-200 flex items-center justify-center mb-4 group-hover:border-sesi-blue group-hover:scale-110 transition-all">
-                <Plus size={24} />
-              </div>
-              <span className="text-[10px] font-bold uppercase tracking-widest">Nova Unidade</span>
-            </button>
           </div>
         </>
       ) : (
-        /* Configuration Wizard Mode */
-        <div className="max-w-4xl mx-auto">
-          {/* Header context */}
-          <div className="flex items-center justify-between mb-10">
-            <button 
-              onClick={() => setIsConfiguring(false)}
-              className="flex items-center gap-2 text-slate-400 hover:text-slate-800 transition-colors text-[10px] font-bold uppercase tracking-widest"
-            >
-              <ChevronLeft size={16} /> Voltar ao Painel
-            </button>
-            <div className="text-right">
-               <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest block mb-1">Configurando Unidade</span>
-               <h2 className="text-2xl font-black text-slate-900 tracking-tighter uppercase italic">{schoolForm.name || 'Nova Unidade'}</h2>
+        /* GUIDED CONFIGURATION WIZARD */
+        <div className="max-w-4xl mx-auto py-4">
+          {/* Top Bar Context */}
+          <div className="flex items-center justify-between mb-12">
+             <button 
+                onClick={() => setIsConfiguring(false)}
+                className="flex items-center gap-2 text-slate-300 hover:text-slate-600 transition-colors text-[10px] font-black uppercase tracking-widest"
+             >
+                <ChevronLeft size={16} /> Voltar ao Painel
+             </button>
+             <div className="text-right">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block opacity-60">Configuração de Unidade</span>
+                <h2 className="text-3xl font-black text-slate-900 tracking-tighter uppercase italic drop-shadow-sm">
+                   {schoolForm.name || 'Nova Unidade'}
+                </h2>
+             </div>
+          </div>
+
+          {/* Stepper Progress */}
+          <div className="px-10 mb-16 relative">
+            <div className="absolute top-1/2 left-0 w-full h-[1px] bg-slate-100 -translate-y-1/2 -z-10" />
+            <div className="flex justify-between">
+                {[
+                  { id: 'identity', label: 'Unidade', icon: Building2 },
+                  { id: 'structure', label: 'Ofertas', icon: GraduationCap },
+                  { id: 'review', label: 'Resumo', icon: CheckCircle }
+                ].map((s, idx) => {
+                  const isActive = activeStep === s.id;
+                  const isDone = ['identity', 'structure', 'review'].indexOf(activeStep) > idx;
+                  return (
+                    <div key={s.id} className="flex flex-col items-center gap-3">
+                       <div className={cn(
+                         "w-12 h-12 rounded-2xl border-2 flex items-center justify-center transition-all duration-300",
+                         isActive ? "bg-sesi-red border-sesi-red text-white scale-110 shadow-xl shadow-sesi-red/30" : 
+                         isDone ? "bg-green-500 border-green-500 text-white" : "bg-white border-slate-100 text-slate-300"
+                       )}>
+                          {isDone ? <CheckCircle size={20} /> : <s.icon size={20} />}
+                       </div>
+                       <span className={cn(
+                         "text-[9px] font-black uppercase tracking-widest",
+                         isActive ? "text-slate-900" : "text-slate-300"
+                       )}>{s.label}</span>
+                    </div>
+                  )
+                })}
             </div>
           </div>
 
-          {/* Stepper Indicator */}
-          <div className="flex items-center justify-between mb-12 relative px-4">
-            <div className="absolute top-1/2 left-0 w-full h-0.5 bg-slate-100 -translate-y-1/2 -z-10 mx-auto max-w-[80%]" />
-            
-            {[
-              { id: 'identity', label: 'Unidade', icon: Building2 },
-              { id: 'offer', label: 'Oferta', icon: BookOpen },
-              { id: 'review', label: 'Resumo', icon: CheckCircle }
-            ].map((s, idx) => (
-              <div key={s.id} className="flex flex-col items-center gap-2">
-                <div className={cn(
-                  "w-10 h-10 rounded-full border-4 flex items-center justify-center transition-all duration-500",
-                  activeStep === s.id && "bg-sesi-blue border-sesi-blue text-white shadow-lg shadow-sesi-blue/30 scale-110",
-                  idx < ['identity', 'offer', 'review'].indexOf(activeStep) && "bg-green-500 border-green-500 text-white",
-                  idx > ['identity', 'offer', 'review'].indexOf(activeStep) && "bg-white border-slate-100 text-slate-300"
-                )}>
-                  <s.icon size={18} />
-                </div>
-                <span className={cn(
-                  "text-[10px] font-bold uppercase tracking-widest",
-                  activeStep === s.id ? "text-sesi-blue" : "text-slate-400"
-                )}>{s.label}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Step Content */}
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden min-h-[450px]">
-             <div className="p-8 md:p-12">
+          {/* Step Content Card */}
+          <div className="bg-white rounded-[40px] border border-slate-200 shadow-2xl shadow-slate-200/50 overflow-hidden min-h-[500px]">
+            <div className="p-8 md:p-14">
                <AnimatePresence mode="wait">
+                 
+                 {/* STEP 1: IDENTITY */}
                  {activeStep === 'identity' && (
                    <motion.div 
                      key="identity"
-                     initial={{ opacity: 0, x: 20 }}
-                     animate={{ opacity: 1, x: 0 }}
-                     exit={{ opacity: 0, x: -20 }}
-                     className="space-y-8"
+                     initial={{ opacity: 0, scale: 0.98 }}
+                     animate={{ opacity: 1, scale: 1 }}
+                     exit={{ opacity: 0, scale: 0.98 }}
+                     className="space-y-10"
                    >
-                     <div className="space-y-1">
-                        <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter italic">Dados da Unidade</h3>
-                        <p className="text-xs text-slate-500">Identificação básica da escola Pernambucana</p>
+                     <div>
+                        <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter italic">1. Identificação da Unidade</h3>
+                        <p className="text-sm text-slate-400 font-medium italic">Como esta escola será apresentada aos responsáveis?</p>
                      </div>
 
                      <div className="grid md:grid-cols-2 gap-8">
                         <div className="space-y-2">
-                          <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Nome da Escola</label>
-                          <input 
-                            value={schoolForm.name} 
-                            onChange={e => setSchoolForm({...schoolForm, name: e.target.value})}
-                            className="w-full px-5 py-4 rounded-xl border border-slate-200 bg-slate-50 text-sm font-bold focus:bg-white focus:border-sesi-blue transition-all outline-none"
-                            placeholder="Ex: SESI Ibura"
-                          />
+                           <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Nome Oficial da Escola</label>
+                           <input 
+                             value={schoolForm.name} 
+                             onChange={e => setSchoolForm({...schoolForm, name: e.target.value})}
+                             className="w-full px-6 py-4 rounded-2xl border border-slate-200 bg-slate-50 text-base font-bold focus:bg-white focus:border-sesi-blue outline-none transition-all shadow-inner"
+                             placeholder="Ex: SESI Paulista"
+                           />
                         </div>
                         <div className="space-y-2">
-                          <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Cidade</label>
-                          <input 
-                            value={schoolForm.city} 
-                            onChange={e => setSchoolForm({...schoolForm, city: e.target.value})}
-                            className="w-full px-5 py-4 rounded-xl border border-slate-200 bg-slate-50 text-sm font-bold focus:bg-white focus:border-sesi-blue transition-all outline-none"
-                            placeholder="Ex: Recife"
-                          />
+                           <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Município de Atuação</label>
+                           <input 
+                             value={schoolForm.city} 
+                             onChange={e => setSchoolForm({...schoolForm, city: e.target.value})}
+                             className="w-full px-6 py-4 rounded-2xl border border-slate-200 bg-slate-50 text-base font-bold focus:bg-white focus:border-sesi-blue outline-none transition-all shadow-inner"
+                             placeholder="Ex: Paulista"
+                           />
                         </div>
                      </div>
 
-                     <div className="flex items-center gap-4 p-6 bg-slate-50/50 rounded-2xl border border-dashed border-slate-300">
-                        <div className={cn(
-                          "w-12 h-6 rounded-full p-1 cursor-pointer transition-colors duration-300",
-                          schoolForm.active ? "bg-green-500" : "bg-slate-300"
-                        )} onClick={() => setSchoolForm({...schoolForm, active: !schoolForm.active})}>
-                           <div className={cn(
-                             "w-4 h-4 rounded-full bg-white transition-transform duration-300 shadow-sm",
-                             schoolForm.active && "translate-x-6"
-                           )} />
+                     <div className="p-8 bg-slate-50/50 rounded-[30px] border border-dashed border-slate-200 flex items-center justify-between">
+                        <div className="max-w-[70%]">
+                           <p className="text-sm font-black text-slate-800 uppercase italic">Disponibilidade Inicial</p>
+                           <p className="text-[10px] text-slate-400 font-medium leading-relaxed">Se ativada, a unidade aparecerá imediatamente no formulário de reserva para novos alunos.</p>
                         </div>
-                        <div>
-                           <p className="text-[10px] font-black uppercase text-slate-800 tracking-tighter">Status da Unidade: {schoolForm.active ? 'Ativa' : 'Inativa'}</p>
-                           <p className="text-[9px] text-slate-400 font-medium italic">Define se a escola aparecerá nos formulários de cadastro de novos alunos</p>
-                        </div>
+                        <button 
+                          onClick={() => setSchoolForm({...schoolForm, active: !schoolForm.active})}
+                          className={cn(
+                            "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all",
+                            schoolForm.active ? "bg-sesi-blue text-white border-sesi-blue shadow-lg shadow-sesi-blue/20" : "bg-white text-slate-400 border-slate-200"
+                          )}
+                        >
+                          {schoolForm.active ? 'Ativa' : 'Pausada'}
+                        </button>
                      </div>
 
                      <div className="pt-10 flex justify-end">
                         <button 
                           disabled={!schoolForm.name || !schoolForm.city}
-                          onClick={() => setActiveStep('offer')}
-                          className="flex items-center gap-3 px-8 py-4 bg-slate-900 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-black transition-all disabled:opacity-30 disabled:cursor-not-allowed group shadow-lg shadow-slate-200"
+                          onClick={() => setActiveStep('structure')}
+                          className="flex items-center gap-3 px-10 py-5 bg-slate-900 text-white rounded-2xl text-[12px] font-black uppercase tracking-widest hover:bg-black transition-all disabled:opacity-20 shadow-xl group"
                         >
-                          Ir para Oferta Educacional <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+                          Próxima Etapa: Estrutura <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
                         </button>
                      </div>
                    </motion.div>
                  )}
 
-                 {activeStep === 'offer' && (
-                   <motion.div 
-                     key="offer"
-                     initial={{ opacity: 0, x: 20 }}
-                     animate={{ opacity: 1, x: 0 }}
-                     exit={{ opacity: 0, x: -20 }}
-                     className="space-y-8"
-                   >
-                     <div className="space-y-1">
-                        <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter italic">Níveis de ensino disponíveis</h3>
-                        <p className="text-xs text-slate-500">Selecione quais templates de curso a unidade {schoolForm.name} oferece</p>
-                     </div>
+                 {/* STEP 2: STRUCTURE (THE BUILDER) */}
+                 {activeStep === 'structure' && (
+                    <motion.div 
+                      key="structure"
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      className="space-y-8"
+                    >
+                      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                        <div>
+                           <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter italic">2. Ofertas Disponíveis</h3>
+                           <p className="text-sm text-slate-400 font-medium italic">Configure os níveis de ensino e cursos técnicos oferecidos nesta escola.</p>
+                        </div>
+                        {!isAddingCourse && (
+                           <button 
+                             onClick={() => setIsAddingCourse(true)}
+                             className="flex items-center gap-2 text-sesi-blue font-black uppercase text-[10px] tracking-widest bg-blue-50 px-4 py-2 rounded-xl hover:bg-blue-100 transition-all border border-blue-100"
+                           >
+                             <PlusCircle size={16} /> Adicionar Nível/Curso
+                           </button>
+                        )}
+                      </div>
 
-                     <div className="grid sm:grid-cols-2 gap-4">
-                        {courses.length === 0 ? (
-                           <div className="col-span-2 p-12 text-center rounded-2xl border-2 border-dashed border-slate-100 space-y-4">
-                              <AlertCircle size={32} className="mx-auto text-amber-500" />
-                              <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Nenhum template de curso cadastrado.</p>
-                              <button onClick={() => { setIsConfiguring(false); setShowTemplateManager(true); }} className="text-[10px] text-sesi-blue font-black uppercase tracking-widest bg-blue-50 px-6 py-2 rounded-lg border border-blue-100">Criar Templates Primeiro</button>
-                           </div>
-                        ) : (
-                          courses.map(course => (
-                            <div 
-                              key={course.id}
-                              onClick={() => toggleCourseSelection(course.id)}
-                              className={cn(
-                                "relative p-5 rounded-2xl border-2 cursor-pointer transition-all hover:scale-[1.02]",
-                                schoolForm.courseIds.includes(course.id)
-                                  ? "bg-sesi-blue border-sesi-blue text-white shadow-xl shadow-sesi-blue/20"
-                                  : "bg-white border-slate-100 text-slate-600 hover:border-slate-200 shadow-sm"
-                              )}
-                            >
-                               <div className="flex justify-between items-start">
-                                 <div>
-                                   <p className={cn("text-[9px] font-black uppercase tracking-widest mb-1", schoolForm.courseIds.includes(course.id) ? "text-blue-100" : "text-slate-400")}>
-                                      {course.type}
-                                   </p>
-                                   <p className="text-sm font-black uppercase tracking-tighter leading-tight italic">{course.name}</p>
-                                 </div>
-                                 <div className={cn(
-                                   "w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all",
-                                   schoolForm.courseIds.includes(course.id) ? "bg-white border-white text-sesi-blue" : "bg-white border-slate-200 text-transparent"
-                                 )}>
-                                   <CheckCircle size={14} className="fill-current" />
-                                 </div>
+                      {isAddingCourse ? (
+                         /* INLINE BUILDER */
+                         <div className="bg-slate-50 rounded-[30px] p-8 border border-slate-200 animate-in zoom-in-95 duration-300">
+                            <div className="flex justify-between items-center mb-10 border-b border-slate-200 pb-4">
+                               <h4 className="text-xs font-black uppercase text-slate-800 tracking-widest flex items-center gap-2">
+                                  <GraduationCap size={18} className="text-sesi-red" /> Novo Nível para {schoolForm.name}
+                               </h4>
+                               <button onClick={() => setIsAddingCourse(false)} className="text-slate-300 hover:text-slate-600">
+                                  <X size={20} />
+                               </button>
+                            </div>
+
+                            <div className="space-y-8">
+                               {/* Part A: Escolha o Nível */}
+                               <div className="space-y-3">
+                                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
+                                     <span className="w-5 h-5 rounded-full bg-slate-900 text-white flex items-center justify-center text-[10px]">1</span> Escolha o Nível de Ensino
+                                  </label>
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                     {COURSE_TYPES.map(type => (
+                                       <button 
+                                          key={type}
+                                          onClick={() => setCourseBuilder({...courseBuilder, type, itinerary: ''})}
+                                          className={cn(
+                                            "px-4 py-4 rounded-2xl border-2 text-[10px] font-black uppercase transition-all text-center leading-tight",
+                                            courseBuilder.type === type ? "bg-sesi-blue border-sesi-blue text-white shadow-lg" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"
+                                          )}
+                                       >
+                                          {type}
+                                       </button>
+                                     ))}
+                                  </div>
                                </div>
-                               <div className="mt-4 flex flex-wrap gap-1">
-                                 {course.levels.map(l => (
-                                   <span key={l} className={cn(
-                                     "text-[8px] px-1.5 py-0.5 rounded font-black uppercase tracking-tighter",
-                                     schoolForm.courseIds.includes(course.id) ? "bg-white/20 text-white" : "bg-slate-50 text-slate-400 border border-slate-100"
-                                   )}>{l}</span>
-                                 ))}
+
+                               {/* Part B: Escolha as Séries (Multiselect) */}
+                               <div className="space-y-3">
+                                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
+                                     <span className="w-5 h-5 rounded-full bg-slate-900 text-white flex items-center justify-center text-[10px]">2</span> Séries Disponíveis no Nível
+                                  </label>
+                                  <div className="flex flex-wrap gap-2">
+                                     {DEFAULT_GRADES[courseBuilder.type].map(grade => (
+                                       <button 
+                                          key={grade}
+                                          onClick={() => {
+                                             if (courseBuilder.selectedLevels.includes(grade)) {
+                                                setCourseBuilder(prev => ({ ...prev, selectedLevels: prev.selectedLevels.filter(g => g !== grade) }));
+                                             } else {
+                                                setCourseBuilder(prev => ({ ...prev, selectedLevels: [...prev.selectedLevels, grade] }));
+                                             }
+                                          }}
+                                          className={cn(
+                                            "px-4 py-2 rounded-xl border text-[10px] font-bold uppercase transition-all",
+                                            courseBuilder.selectedLevels.includes(grade) ? "bg-slate-800 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-400"
+                                          )}
+                                       >
+                                          {grade}
+                                       </button>
+                                     ))}
+                                  </div>
+                               </div>
+
+                               {/* Part C: Itinerário (Somente Ensino Médio) */}
+                               {courseBuilder.type === 'Ensino Médio' && (
+                                 <div className="space-y-3 pt-4 border-t border-slate-200 border-dashed">
+                                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
+                                       <span className="w-5 h-5 rounded-full bg-sesi-red text-white flex items-center justify-center text-[10px]">3</span> Selecione o Curso Técnico / Itinerário
+                                    </label>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                       <button 
+                                          onClick={() => setCourseBuilder({...courseBuilder, itinerary: ''})}
+                                          className={cn(
+                                            "px-4 py-3 rounded-2xl border-2 text-[10px] font-black uppercase transition-all text-left",
+                                            !courseBuilder.itinerary ? "bg-sesi-red border-sesi-red text-white shadow-lg" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"
+                                          )}
+                                       >
+                                          Regular (Ensino Médio Padrão)
+                                       </button>
+                                       {TECHNICAL_ITINERARIES.map(it => (
+                                          <button 
+                                            key={it}
+                                            onClick={() => setCourseBuilder({...courseBuilder, itinerary: it})}
+                                            className={cn(
+                                              "px-4 py-3 rounded-2xl border-2 text-[10px] font-black uppercase transition-all text-left",
+                                              courseBuilder.itinerary === it ? "bg-sesi-red border-sesi-red text-white shadow-lg" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"
+                                            )}
+                                          >
+                                             Técnico em {it}
+                                          </button>
+                                       ))}
+                                    </div>
+                                 </div>
+                               )}
+
+                               <div className="pt-6">
+                                  <button 
+                                    disabled={courseBuilder.selectedLevels.length === 0}
+                                    onClick={findOrCreateCourseInOffer}
+                                    className="w-full bg-slate-900 text-white py-4 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-black transition-all shadow-xl flex items-center justify-center gap-3 disabled:opacity-20"
+                                  >
+                                     <Save size={18} /> Confirmar este Nível na Unidade
+                                  </button>
                                </div>
                             </div>
-                          ))
-                        )}
-                     </div>
+                         </div>
+                      ) : (
+                         /* LIST OF ADDED OFFERS */
+                         <div className="space-y-4">
+                            {schoolForm.courseIds.length === 0 ? (
+                               <div className="p-20 text-center rounded-[30px] border-2 border-dashed border-slate-100">
+                                  < GraduationCap size={48} className="mx-auto text-slate-100 mb-6" />
+                                  <p className="text-[10px] font-black uppercase text-slate-300 tracking-widest max-w-xs mx-auto">Nenhum nível educacional configurado para esta unidade ainda.</p>
+                                  <button onClick={() => setIsAddingCourse(true)} className="mt-8 text-sesi-blue font-black uppercase text-[10px] tracking-widest border-b border-sesi-blue pb-1 hover:brightness-125 transition-all">Começar Configuração</button>
+                               </div>
+                            ) : (
+                               <div className="grid gap-4">
+                                  {schoolForm.courseIds.map(cid => {
+                                     const course = courses.find(c => c.id === cid);
+                                     if (!course) return null;
+                                     return (
+                                       <div key={cid} className="group p-6 bg-white border border-slate-100 rounded-[24px] shadow-sm hover:shadow-md transition-all flex justify-between items-center">
+                                          <div>
+                                             <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-[8px] font-black uppercase text-slate-300 tracking-[0.1em]">{course.type}</span>
+                                                {course.itinerary && <span className="bg-sesi-red/10 text-sesi-red text-[7px] font-black uppercase px-2 py-0.5 rounded-full">Itinerário Técnico</span>}
+                                             </div>
+                                             <h5 className="text-base font-black text-slate-800 uppercase tracking-tighter italic">{course.name}</h5>
+                                             <div className="flex flex-wrap gap-1 mt-3">
+                                                {course.levels.map(l => (
+                                                  <span key={l} className="text-[8px] bg-slate-50 text-slate-400 px-2 py-1 rounded font-black border border-slate-100">{l}</span>
+                                                ))}
+                                             </div>
+                                          </div>
+                                          <button 
+                                            onClick={() => removeCourseFromSchool(cid)}
+                                            className="p-3 text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-2xl transition-all opacity-0 group-hover:opacity-100"
+                                          >
+                                             <Trash2 size={20} />
+                                          </button>
+                                       </div>
+                                     )
+                                  })}
+                               </div>
+                            )}
 
-                     <div className="pt-10 flex justify-between">
-                        <button 
-                          onClick={() => setActiveStep('identity')}
-                          className="flex items-center gap-2 px-6 py-3 text-slate-400 hover:text-slate-800 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all"
-                        >
-                          <ChevronLeft size={16} /> Voltar
-                        </button>
-                        <button 
-                          disabled={schoolForm.courseIds.length === 0}
-                          onClick={() => setActiveStep('review')}
-                          className="flex items-center gap-3 px-8 py-4 bg-slate-900 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-black transition-all disabled:opacity-30 group shadow-lg"
-                        >
-                          Revisar Configuração <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
-                        </button>
-                     </div>
-                   </motion.div>
+                            <div className="pt-20 flex justify-between">
+                               <button 
+                                 onClick={() => setActiveStep('identity')}
+                                 className="flex items-center gap-2 px-8 py-3 text-slate-300 hover:text-slate-600 transition-colors text-[10px] font-black uppercase tracking-widest"
+                               >
+                                  <ChevronLeft size={16} /> Ajustar Unidade
+                               </button>
+                               <button 
+                                 disabled={schoolForm.courseIds.length === 0}
+                                 onClick={() => setActiveStep('review')}
+                                 className="flex items-center gap-3 px-10 py-5 bg-slate-900 text-white rounded-2xl text-[12px] font-black uppercase tracking-widest hover:bg-black shadow-xl group disabled:opacity-20 transition-all"
+                               >
+                                 Próximo: Revisar Resumo <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                               </button>
+                            </div>
+                         </div>
+                      )}
+                    </motion.div>
                  )}
 
+                 {/* STEP 3: REVIEW */}
                  {activeStep === 'review' && (
                     <motion.div 
                       key="review"
@@ -594,71 +582,70 @@ export default function AdminSchools() {
                       exit={{ opacity: 0, scale: 0.95 }}
                       className="space-y-10"
                     >
-                      <div className="text-center space-y-2">
-                        <div className="w-16 h-16 bg-green-50 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4 border border-green-100">
-                           <CheckCircle size={32} />
-                        </div>
-                        <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter italic">Resumo Final</h3>
-                        <p className="text-xs text-slate-500">Tudo pronto para publicar a unidade {schoolForm.name}</p>
+                      <div className="text-center">
+                         <div className="w-20 h-20 bg-green-500 text-white rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-green-500/30">
+                            <CheckCircle size={32} />
+                         </div>
+                         <h3 className="text-3xl font-black text-slate-900 uppercase tracking-tighter italic">Resumo Estrutural</h3>
+                         <p className="text-sm text-slate-400 font-medium italic">Confirme se as configurações da unidade {schoolForm.name} estão corretas.</p>
                       </div>
 
-                      <div className="bg-slate-50/50 rounded-3xl p-8 border border-slate-200 shadow-inner space-y-6">
-                        <div className="grid grid-cols-2 gap-8 border-b border-slate-200 pb-6">
-                           <div>
-                              <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-2">IDENTIDADE</p>
-                              <p className="text-lg font-black text-slate-800 uppercase italic leading-none">{schoolForm.name}</p>
-                              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1 italic">{schoolForm.city}, Pernambuco</p>
-                           </div>
-                           <div>
-                              <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-2">STATUS</p>
-                              <div className="flex items-center gap-2">
-                                 <div className={cn("w-3 h-3 rounded-full animate-pulse", schoolForm.active ? "bg-green-500" : "bg-slate-300")} />
-                                 <p className="text-[11px] font-black uppercase text-slate-800">{schoolForm.active ? 'Unidade Online' : 'Unidade em Pausa'}</p>
-                              </div>
-                           </div>
-                        </div>
+                      <div className="bg-slate-900 text-white rounded-[40px] p-10 space-y-10 shadow-2xl">
+                         <div className="grid md:grid-cols-2 gap-10 border-b border-white/10 pb-10">
+                            <div>
+                               <p className="text-[10px] font-black uppercase text-blue-300 tracking-[0.2em] mb-3">Identidade da Unidade</p>
+                               <h4 className="text-2xl font-black uppercase italic tracking-tighter">{schoolForm.name}</h4>
+                               <p className="text-xs font-bold text-slate-400 uppercase tracking-[0.15em] mt-1 italic">{schoolForm.city}, PE</p>
+                            </div>
+                            <div>
+                               <p className="text-[10px] font-black uppercase text-blue-300 tracking-[0.2em] mb-3">Status de Matrícula</p>
+                               <div className="flex items-center gap-3">
+                                  <div className={cn("w-3 h-3 rounded-full animate-pulse", schoolForm.active ? "bg-green-500" : "bg-amber-500")} />
+                                  <span className="text-sm font-black uppercase italic">{schoolForm.active ? 'Ativa na Rede' : 'Apenas Administrativa'}</span>
+                               </div>
+                            </div>
+                         </div>
 
-                        <div>
-                           <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-4">PORTFÓLIO VINCULADO ({schoolForm.courseIds.length})</p>
-                           <div className="grid grid-cols-1 md:grid-cols-2 gap-y-3 gap-x-6">
-                              {schoolForm.courseIds.map(cid => {
-                                 const course = courses.find(c => c.id === cid);
-                                 return (
-                                   <div key={cid} className="flex justify-between items-center py-2 border-b border-slate-100 group">
-                                      <p className="text-[10px] font-black text-slate-600 uppercase italic truncate pr-4">{course?.name}</p>
-                                      <div className="flex gap-0.5">
-                                         <span className="text-[8px] font-bold text-slate-300 uppercase tracking-tighter">{course?.levels.length} séries</span>
-                                      </div>
-                                   </div>
-                                 )
-                              })}
-                           </div>
-                        </div>
+                         <div>
+                            <p className="text-[10px] font-black uppercase text-blue-300 tracking-[0.2em] mb-6">Grade Educacional Vinculada ({schoolForm.courseIds.length} Níveis)</p>
+                            <div className="grid sm:grid-cols-2 gap-x-12 gap-y-6">
+                               {schoolForm.courseIds.map(cid => {
+                                  const course = courses.find(c => c.id === cid);
+                                  return (
+                                    <div key={cid} className="flex flex-col border-l-2 border-white/10 pl-6 space-y-1">
+                                       <p className="text-[12px] font-black uppercase italic leading-none">{course?.name}</p>
+                                       <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{course?.levels.length} Séries Ativas</p>
+                                    </div>
+                                  )
+                                })}
+                            </div>
+                         </div>
                       </div>
 
-                      <div className="pt-4 flex justify-between items-center">
-                        <button 
-                          onClick={() => setActiveStep('offer')}
-                          className="flex items-center gap-2 px-6 py-3 text-slate-400 hover:text-slate-800 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all"
-                        >
-                          <ChevronLeft size={16} /> Ajustar Oferta
-                        </button>
-                        <button 
-                          onClick={handleSaveSchool}
-                          className="flex items-center gap-3 px-12 py-5 bg-sesi-red text-white rounded-2xl text-[14px] font-black uppercase tracking-widest hover:brightness-110 shadow-2xl shadow-sesi-red/40 transition-all active:scale-95 group"
-                        >
-                          <Save size={20} /> Salvar e Ativar Unidade
-                        </button>
+                      <div className="flex justify-between items-center pt-6">
+                         <button 
+                            onClick={() => setActiveStep('structure')}
+                            className="text-[11px] font-black text-slate-400 uppercase tracking-widest hover:text-slate-900 transition-colors"
+                         >
+                            Alterar Estrutura
+                         </button>
+                         <button 
+                            onClick={handleSaveSchool}
+                            className="px-14 py-6 bg-sesi-red text-white rounded-[24px] text-base font-black uppercase tracking-[0.2em] hover:brightness-110 shadow-2xl shadow-sesi-red/40 transition-all active:scale-95 flex items-center gap-4"
+                         >
+                            <Save size={24} /> Finalizar e Ativar
+                         </button>
                       </div>
                     </motion.div>
                  )}
+
                </AnimatePresence>
-             </div>
+            </div>
           </div>
-          
-          <div className="mt-12 flex items-center gap-3 justify-center text-slate-400 opacity-60">
-             <Wand2 size={14} className="text-sesi-blue" />
-             <p className="text-[10px] font-black uppercase tracking-widest italic animate-pulse">Assistente de Configuração Inteligente SESI Rede</p>
+
+          <div className="mt-12 flex flex-col items-center gap-3 text-slate-300 opacity-40">
+             <Wand2 size={18} className="text-sesi-blue" />
+             <p className="text-[10px] font-black uppercase tracking-[0.3em] italic">Gerenciamento Integrado de Estruturas SESI Rede</p>
           </div>
         </div>
       )}
