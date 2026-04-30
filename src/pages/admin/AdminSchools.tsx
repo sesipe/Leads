@@ -1,16 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
+import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { School, Course, CourseType } from '../../types';
 import { 
   Plus, 
   Trash2, 
-  Edit2, 
   CheckCircle, 
-  XCircle, 
   ChevronRight, 
   School as SchoolIcon, 
-  Layers, 
   ChevronLeft, 
   Building2, 
   BookOpen, 
@@ -19,13 +16,17 @@ import {
   Wand2,
   AlertCircle,
   GraduationCap,
-  PlusCircle,
-  X
+  Settings2,
+  Check
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
-const COURSE_TYPES: CourseType[] = ['Ensino Fundamental – Anos Iniciais', 'Ensino Fundamental – Anos Finais', 'Ensino Médio'];
+const COURSE_TYPES: CourseType[] = [
+  'Ensino Fundamental – Anos Iniciais', 
+  'Ensino Fundamental – Anos Finais', 
+  'Ensino Médio'
+];
 
 const DEFAULT_GRADES: Record<CourseType, string[]> = {
   'Ensino Fundamental – Anos Iniciais': ['1º Ano', '2º Ano', '3º Ano', '4º Ano', '5º Ano'],
@@ -41,7 +42,7 @@ const TECHNICAL_ITINERARIES = [
   'Jogos Digitais'
 ];
 
-type Step = 'identity' | 'structure' | 'review';
+type WizardStep = 'identity' | 'levels' | 'grades' | 'tech' | 'review';
 
 export default function AdminSchools() {
   const [schools, setSchools] = useState<School[]>([]);
@@ -50,31 +51,22 @@ export default function AdminSchools() {
 
   // Flow State
   const [isConfiguring, setIsConfiguring] = useState(false);
-  const [activeStep, setActiveStep] = useState<Step>('identity');
+  const [activeStep, setActiveStep] = useState<WizardStep>('identity');
   const [selectedSchoolId, setSelectedSchoolId] = useState<string | null>(null);
 
-  // Form states
-  const [schoolForm, setSchoolForm] = useState({ name: '', city: '', active: true, courseIds: [] as string[] });
-
-  // Course Builder Form (Internal state during wizard)
-  const [isAddingCourse, setIsAddingCourse] = useState(false);
-  const [courseBuilder, setCourseBuilder] = useState({
-    type: 'Ensino Fundamental – Anos Iniciais' as CourseType,
-    selectedLevels: [] as string[],
-    itinerary: ''
+  // Wizard Data State
+  const [wizardData, setWizardData] = useState({
+    name: '',
+    city: '',
+    active: true,
+    selectedLevels: [] as CourseType[],
+    gradesByLevel: {} as Record<CourseType, string[]>,
+    techByGrade: {} as Record<string, string[]> // '1º Ano' -> ['Dev Sistemas', 'Eletro']
   });
 
   useEffect(() => {
     fetchData();
   }, []);
-
-  useEffect(() => {
-    // Sync default grades when type changes in builder
-    setCourseBuilder(prev => ({
-      ...prev,
-      selectedLevels: DEFAULT_GRADES[prev.type]
-    }));
-  }, [courseBuilder.type]);
 
   async function fetchData() {
     setLoading(true);
@@ -95,28 +87,157 @@ export default function AdminSchools() {
   const startConfiguration = (school?: School) => {
     if (school) {
       setSelectedSchoolId(school.id);
-      setSchoolForm({
+      
+      // Map existing school courses back to wizard state for editing
+      const schoolCourses = courses.filter(c => school.courseIds?.includes(c.id));
+      const selectedLevels = Array.from(new Set(schoolCourses.map(c => c.type)));
+      const gradesByLevel: Record<string, string[]> = {};
+      const techByGrade: Record<string, string[]> = {};
+
+      schoolCourses.forEach(c => {
+        gradesByLevel[c.type] = Array.from(new Set([...(gradesByLevel[c.type] || []), ...c.levels]));
+        if (c.itinerary) {
+          c.levels.forEach(lvl => {
+            techByGrade[lvl] = Array.from(new Set([...(techByGrade[lvl] || []), c.itinerary!]));
+          });
+        }
+      });
+
+      setWizardData({
         name: school.name,
         city: school.city,
         active: school.active,
-        courseIds: school.courseIds || []
+        selectedLevels,
+        gradesByLevel: gradesByLevel as Record<CourseType, string[]>,
+        techByGrade
       });
     } else {
       setSelectedSchoolId(null);
-      setSchoolForm({ name: '', city: '', active: true, courseIds: [] });
+      setWizardData({
+        name: '', city: '', active: true,
+        selectedLevels: [],
+        gradesByLevel: {} as Record<CourseType, string[]>,
+        techByGrade: {}
+      });
     }
     setIsConfiguring(true);
     setActiveStep('identity');
   };
 
-  const handleSaveSchool = async () => {
+  const handleLevelToggle = (type: CourseType) => {
+    setWizardData(prev => {
+      const selected = prev.selectedLevels.includes(type) 
+        ? prev.selectedLevels.filter(t => t !== type)
+        : [...prev.selectedLevels, type];
+      
+      return { ...prev, selectedLevels: selected };
+    });
+  };
+
+  const handleGradeToggle = (level: CourseType, grade: string) => {
+    setWizardData(prev => {
+      const current = prev.gradesByLevel[level] || [];
+      const updated = current.includes(grade)
+        ? current.filter(g => g !== grade)
+        : [...current, grade];
+      
+      return {
+        ...prev,
+        gradesByLevel: { ...prev.gradesByLevel, [level]: updated }
+      };
+    });
+  };
+
+  const handleTechToggle = (grade: string, tech: string) => {
+    setWizardData(prev => {
+      const current = prev.techByGrade[grade] || [];
+      const updated = current.includes(tech)
+        ? current.filter(t => t !== tech)
+        : [...current, tech];
+      
+      return {
+        ...prev,
+        techByGrade: { ...prev.techByGrade, [grade]: updated }
+      };
+    });
+  };
+
+  const handleFinalize = async () => {
     setLoading(true);
     try {
-      if (selectedSchoolId) {
-        await updateDoc(doc(db, 'schools', selectedSchoolId), schoolForm);
-      } else {
-        await addDoc(collection(db, 'schools'), schoolForm);
+      const finalCourseIds: string[] = [];
+
+      // 1. Create/Find Regular Courses for each level
+      for (const level of wizardData.selectedLevels) {
+        const grades = wizardData.gradesByLevel[level] || [];
+        if (grades.length === 0) continue;
+
+        // Check if regular course exists
+        const regularExisting = courses.find(c => 
+          c.type === level && 
+          !c.itinerary && 
+          JSON.stringify(c.levels.sort()) === JSON.stringify(grades.sort())
+        );
+
+        if (regularExisting) {
+          finalCourseIds.push(regularExisting.id);
+        } else {
+          const newDoc = await addDoc(collection(db, 'courses'), {
+            name: level,
+            type: level,
+            levels: grades,
+            itinerary: null
+          });
+          finalCourseIds.push(newDoc.id);
+        }
       }
+
+      // 2. Create/Find Technical Courses for High School
+      if (wizardData.selectedLevels.includes('Ensino Médio')) {
+        const msGrades = wizardData.gradesByLevel['Ensino Médio'] || [];
+        
+        // Group tech courses by itinerary
+        const itins = Array.from(new Set(Object.values(wizardData.techByGrade).flat()));
+        
+        for (const itinerary of itins) {
+          // Identify which grades have this itinerary
+          const itLevels = msGrades.filter(g => wizardData.techByGrade[g]?.includes(itinerary));
+          if (itLevels.length === 0) continue;
+
+          const techExisting = courses.find(c => 
+            c.type === 'Ensino Médio' && 
+            c.itinerary === itinerary && 
+            JSON.stringify(c.levels.sort()) === JSON.stringify(itLevels.sort())
+          );
+
+          if (techExisting) {
+            finalCourseIds.push(techExisting.id);
+          } else {
+            const newDoc = await addDoc(collection(db, 'courses'), {
+              name: `Técnico em ${itinerary}`,
+              type: 'Ensino Médio',
+              levels: itLevels,
+              itinerary: itinerary
+            });
+            finalCourseIds.push(newDoc.id);
+          }
+        }
+      }
+
+      // 3. Save School
+      const schoolPayload = {
+        name: wizardData.name,
+        city: wizardData.city,
+        active: wizardData.active,
+        courseIds: Array.from(new Set(finalCourseIds))
+      };
+
+      if (selectedSchoolId) {
+        await updateDoc(doc(db, 'schools', selectedSchoolId), schoolPayload);
+      } else {
+        await addDoc(collection(db, 'schools'), schoolPayload);
+      }
+
       await fetchData();
       setIsConfiguring(false);
     } catch (err) {
@@ -124,70 +245,10 @@ export default function AdminSchools() {
     } finally {
       setLoading(false);
     }
-  }
-
-  // Logic to find or create a course matching the current builder configuration
-  const findOrCreateCourseInOffer = async () => {
-    try {
-      let displayName = courseBuilder.type as string;
-      if (courseBuilder.type === 'Ensino Médio') {
-        const typePrefix = courseBuilder.itinerary ? 'Técnico em' : 'Ensino Médio';
-        const suffix = courseBuilder.itinerary ? courseBuilder.itinerary : 'Regular';
-        displayName = `${typePrefix} ${suffix}`;
-      }
-
-      // Check if this specific configuration already exists in our registry
-      const existing = courses.find(c => 
-        c.type === courseBuilder.type && 
-        c.itinerary === (courseBuilder.itinerary || null) &&
-        JSON.stringify(c.levels.sort()) === JSON.stringify(courseBuilder.selectedLevels.sort())
-      );
-
-      let courseId = '';
-      if (existing) {
-        courseId = existing.id;
-      } else {
-        const newDoc = await addDoc(collection(db, 'courses'), {
-          name: displayName,
-          type: courseBuilder.type,
-          levels: courseBuilder.selectedLevels,
-          itinerary: courseBuilder.itinerary || null
-        });
-        courseId = newDoc.id;
-        // Update local courses state
-        const freshCoursesSnap = await getDocs(collection(db, 'courses'));
-        setCourses(freshCoursesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Course)));
-      }
-
-      // Link to school
-      setSchoolForm(prev => {
-        if (prev.courseIds.includes(courseId)) return prev;
-        return { ...prev, courseIds: [...prev.courseIds, courseId] };
-      });
-      setIsAddingCourse(false);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const removeCourseFromSchool = (id: string) => {
-    setSchoolForm(prev => ({
-      ...prev,
-      courseIds: prev.courseIds.filter(cid => cid !== id)
-    }));
-  };
-
-  const toggleSchoolActive = async (id: string, current: boolean) => {
-    try {
-      await updateDoc(doc(db, 'schools', id), { active: !current });
-      setSchools(schools.map(s => s.id === id ? { ...s, active: !current } : s));
-    } catch (err) {
-      console.error(err);
-    }
   };
 
   const deleteSchool = async (id: string) => {
-    if (!confirm('Excluir unidade? Leads associados podem perder o vínculo.')) return;
+    if (!confirm('Excluir unidade? Isso removerá o acesso ao formulário.')) return;
     try {
       await deleteDoc(doc(db, 'schools', id));
       fetchData();
@@ -197,26 +258,29 @@ export default function AdminSchools() {
   if (loading && !isConfiguring) return (
     <div className="h-[60vh] flex flex-col items-center justify-center space-y-4">
       <div className="w-10 h-10 border-4 border-sesi-blue border-t-transparent rounded-full animate-spin"></div>
-      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest animate-pulse italic">Acessando Rede de Unidades...</p>
+      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest animate-pulse italic">Gerenciando Rede SESI...</p>
     </div>
   );
+
+  const stepIndex = ['identity', 'levels', 'grades', 'tech', 'review'].indexOf(activeStep);
+  const totalSteps = wizardData.selectedLevels.includes('Ensino Médio') ? 5 : 4;
+  const displayStep = activeStep === 'tech' && !wizardData.selectedLevels.includes('Ensino Médio') ? null : stepIndex + 1;
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500 pb-20">
       
       {!isConfiguring ? (
         <>
-          {/* Main List Management */}
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-slate-100 pb-8">
             <div>
-              <h1 className="text-3xl font-black text-slate-900 tracking-tighter uppercase italic">Administração de Unidades</h1>
-              <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">SESI Pernambuco • Configuração de Matrícula</p>
+              <h1 className="text-3xl font-black text-slate-900 tracking-tighter uppercase italic">Rede de Unidades</h1>
+              <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">Configuração de Oferta Educacional</p>
             </div>
             <button 
               onClick={() => startConfiguration()}
               className="flex items-center gap-3 px-8 py-3 bg-sesi-red text-white rounded-2xl text-[12px] font-black uppercase tracking-widest hover:brightness-110 shadow-2xl shadow-sesi-red/30 transition-all active:scale-95"
             >
-                <Building2 size={18} /> Criar Nova Unidade
+                <Plus size={18} /> Nova Unidade
             </button>
           </div>
 
@@ -230,16 +294,13 @@ export default function AdminSchools() {
                 <div className="p-7">
                   <div className="flex justify-between items-start mb-6">
                     <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center group-hover:bg-blue-50 transition-colors">
-                      <SchoolIcon className="text-slate-400 group-hover:text-sesi-blue transition-colors" size={24} />
+                      <SchoolIcon className="text-slate-400 group-hover:text-sesi-blue" size={24} />
                     </div>
                     <div className="flex gap-2">
-                        <button 
-                          onClick={() => toggleSchoolActive(school.id, school.active)}
-                          className={cn(
-                            "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all",
-                            school.active ? "bg-green-50 text-green-600 border-green-100" : "bg-slate-100 text-slate-400 border-slate-200"
-                          )}
-                        >
+                        <button className={cn(
+                          "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all",
+                          school.active ? "bg-green-50 text-green-600 border-green-100" : "bg-slate-100 text-slate-400 border-slate-200"
+                        )}>
                           {school.active ? 'Ativa' : 'Pausa'}
                         </button>
                         <button onClick={() => deleteSchool(school.id)} className="p-2 text-slate-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
@@ -252,11 +313,8 @@ export default function AdminSchools() {
                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-2">{school.city}, PE</p>
 
                   <div className="mt-8 pt-6 border-t border-slate-50 flex items-center justify-between">
-                    <div className="flex flex-col">
-                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest italic leading-none mb-1">Oferta Ativa</span>
-                       <span className="text-sm font-black text-sesi-blue uppercase tracking-tighter">
-                          {school.courseIds?.length || 0} Nível(is)
-                       </span>
+                    <div className="text-[10px] font-black text-sesi-blue uppercase italic">
+                       {school.courseIds?.length || 0} níveis ativos
                     </div>
                     <button 
                       onClick={() => startConfiguration(school)}
@@ -271,323 +329,271 @@ export default function AdminSchools() {
           </div>
         </>
       ) : (
-        /* GUIDED CONFIGURATION WIZARD */
+        /* WIZARD MODE */
         <div className="max-w-4xl mx-auto py-4">
-          {/* Top Bar Context */}
           <div className="flex items-center justify-between mb-12">
              <button 
                 onClick={() => setIsConfiguring(false)}
                 className="flex items-center gap-2 text-slate-300 hover:text-slate-600 transition-colors text-[10px] font-black uppercase tracking-widest"
              >
-                <ChevronLeft size={16} /> Voltar ao Painel
+                <ChevronLeft size={16} /> Cancelar
              </button>
              <div className="text-right">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block opacity-60">Configuração de Unidade</span>
-                <h2 className="text-3xl font-black text-slate-900 tracking-tighter uppercase italic drop-shadow-sm">
-                   {schoolForm.name || 'Nova Unidade'}
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block opacity-60">Step {displayStep} de {totalSteps}</span>
+                <h2 className="text-2xl font-black text-slate-900 tracking-tighter uppercase italic">
+                   Configurando: {wizardData.name || 'Nova Unidade'}
                 </h2>
              </div>
           </div>
 
-          {/* Stepper Progress */}
-          <div className="px-10 mb-16 relative">
-            <div className="absolute top-1/2 left-0 w-full h-[1px] bg-slate-100 -translate-y-1/2 -z-10" />
-            <div className="flex justify-between">
-                {[
-                  { id: 'identity', label: 'Unidade', icon: Building2 },
-                  { id: 'structure', label: 'Ofertas', icon: GraduationCap },
-                  { id: 'review', label: 'Resumo', icon: CheckCircle }
-                ].map((s, idx) => {
-                  const isActive = activeStep === s.id;
-                  const isDone = ['identity', 'structure', 'review'].indexOf(activeStep) > idx;
-                  return (
-                    <div key={s.id} className="flex flex-col items-center gap-3">
-                       <div className={cn(
-                         "w-12 h-12 rounded-2xl border-2 flex items-center justify-center transition-all duration-300",
-                         isActive ? "bg-sesi-red border-sesi-red text-white scale-110 shadow-xl shadow-sesi-red/30" : 
-                         isDone ? "bg-green-500 border-green-500 text-white" : "bg-white border-slate-100 text-slate-300"
-                       )}>
-                          {isDone ? <CheckCircle size={20} /> : <s.icon size={20} />}
-                       </div>
-                       <span className={cn(
-                         "text-[9px] font-black uppercase tracking-widest",
-                         isActive ? "text-slate-900" : "text-slate-300"
-                       )}>{s.label}</span>
-                    </div>
-                  )
-                })}
-            </div>
-          </div>
-
-          {/* Step Content Card */}
-          <div className="bg-white rounded-[40px] border border-slate-200 shadow-2xl shadow-slate-200/50 overflow-hidden min-h-[500px]">
-            <div className="p-8 md:p-14">
+          <div className="bg-white rounded-[40px] border border-slate-200 shadow-2xl shadow-slate-200/50 overflow-hidden min-h-[550px]">
+             <div className="p-8 md:p-14">
                <AnimatePresence mode="wait">
                  
-                 {/* STEP 1: IDENTITY */}
+                 {/* TELA 1: CRIAR NOVA UNIDADE */}
                  {activeStep === 'identity' && (
                    <motion.div 
                      key="identity"
-                     initial={{ opacity: 0, scale: 0.98 }}
-                     animate={{ opacity: 1, scale: 1 }}
-                     exit={{ opacity: 0, scale: 0.98 }}
+                     initial={{ opacity: 0, x: 20 }}
+                     animate={{ opacity: 1, x: 0 }}
+                     exit={{ opacity: 0, x: -20 }}
                      className="space-y-10"
                    >
-                     <div>
-                        <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter italic">1. Identificação da Unidade</h3>
-                        <p className="text-sm text-slate-400 font-medium italic">Como esta escola será apresentada aos responsáveis?</p>
+                     <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-white border-2 border-sesi-red rounded-2xl flex items-center justify-center text-sesi-red">
+                           <Building2 size={24} />
+                        </div>
+                        <div>
+                           <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter italic">Informações da Unidade</h3>
+                           <p className="text-sm text-slate-400 font-medium italic">Dados básicos de identificação</p>
+                        </div>
                      </div>
 
                      <div className="grid md:grid-cols-2 gap-8">
                         <div className="space-y-2">
-                           <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Nome Oficial da Escola</label>
+                           <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">Nome da Unidade <Settings2 size={12} /></label>
                            <input 
-                             value={schoolForm.name} 
-                             onChange={e => setSchoolForm({...schoolForm, name: e.target.value})}
-                             className="w-full px-6 py-4 rounded-2xl border border-slate-200 bg-slate-50 text-base font-bold focus:bg-white focus:border-sesi-blue outline-none transition-all shadow-inner"
-                             placeholder="Ex: SESI Paulista"
+                             value={wizardData.name} 
+                             onChange={e => setWizardData({...wizardData, name: e.target.value})}
+                             className="w-full px-6 py-4 rounded-2xl border border-slate-200 bg-slate-50 text-base font-bold focus:bg-white focus:border-sesi-blue outline-none transition-all"
+                             placeholder="Ex: SESI Cabo"
                            />
                         </div>
                         <div className="space-y-2">
-                           <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Município de Atuação</label>
+                           <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">Município <Building2 size={12} /></label>
                            <input 
-                             value={schoolForm.city} 
-                             onChange={e => setSchoolForm({...schoolForm, city: e.target.value})}
-                             className="w-full px-6 py-4 rounded-2xl border border-slate-200 bg-slate-50 text-base font-bold focus:bg-white focus:border-sesi-blue outline-none transition-all shadow-inner"
-                             placeholder="Ex: Paulista"
+                             value={wizardData.city} 
+                             onChange={e => setWizardData({...wizardData, city: e.target.value})}
+                             className="w-full px-6 py-4 rounded-2xl border border-slate-200 bg-slate-50 text-base font-bold focus:bg-white focus:border-sesi-blue outline-none transition-all"
+                             placeholder="Ex: Cabo de Santo Agostinho"
                            />
                         </div>
                      </div>
 
-                     <div className="p-8 bg-slate-50/50 rounded-[30px] border border-dashed border-slate-200 flex items-center justify-between">
-                        <div className="max-w-[70%]">
-                           <p className="text-sm font-black text-slate-800 uppercase italic">Disponibilidade Inicial</p>
-                           <p className="text-[10px] text-slate-400 font-medium leading-relaxed">Se ativada, a unidade aparecerá imediatamente no formulário de reserva para novos alunos.</p>
-                        </div>
+                     <div className="flex items-center gap-6 p-8 bg-slate-50/50 rounded-[30px] border border-dashed border-slate-200">
                         <button 
-                          onClick={() => setSchoolForm({...schoolForm, active: !schoolForm.active})}
+                          onClick={() => setWizardData({...wizardData, active: !wizardData.active})}
                           className={cn(
-                            "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all",
-                            schoolForm.active ? "bg-sesi-blue text-white border-sesi-blue shadow-lg shadow-sesi-blue/20" : "bg-white text-slate-400 border-slate-200"
+                            "w-14 h-8 rounded-full p-1 transition-all duration-300",
+                            wizardData.active ? "bg-green-500" : "bg-slate-300"
                           )}
                         >
-                          {schoolForm.active ? 'Ativa' : 'Pausada'}
+                           <div className={cn("w-6 h-6 bg-white rounded-full transition-transform duration-300", wizardData.active && "translate-x-6")} />
                         </button>
+                        <div>
+                           <p className="text-xs font-black uppercase text-slate-900 tracking-tighter">Status: {wizardData.active ? 'Ativa' : 'Inativa'}</p>
+                           <p className="text-[10px] text-slate-400">Unidades inativas não recebem novos leads externos.</p>
+                        </div>
                      </div>
 
                      <div className="pt-10 flex justify-end">
                         <button 
-                          disabled={!schoolForm.name || !schoolForm.city}
-                          onClick={() => setActiveStep('structure')}
-                          className="flex items-center gap-3 px-10 py-5 bg-slate-900 text-white rounded-2xl text-[12px] font-black uppercase tracking-widest hover:bg-black transition-all disabled:opacity-20 shadow-xl group"
+                          disabled={!wizardData.name || !wizardData.city}
+                          onClick={() => setActiveStep('levels')}
+                          className="flex items-center gap-3 px-12 py-5 bg-slate-900 text-white rounded-2xl text-[12px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl disabled:opacity-20 flex"
                         >
-                          Próxima Etapa: Estrutura <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                          Próximo <ArrowRight size={18} />
                         </button>
                      </div>
                    </motion.div>
                  )}
 
-                 {/* STEP 2: STRUCTURE (THE BUILDER) */}
-                 {activeStep === 'structure' && (
+                 {/* TELA 2: SELECIONAR NÍVEIS DE ENSINO */}
+                 {activeStep === 'levels' && (
                     <motion.div 
-                      key="structure"
+                      key="levels"
                       initial={{ opacity: 0, x: 20 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: -20 }}
-                      className="space-y-8"
+                      className="space-y-10"
                     >
-                      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-                        <div>
-                           <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter italic">2. Ofertas Disponíveis</h3>
-                           <p className="text-sm text-slate-400 font-medium italic">Configure os níveis de ensino e cursos técnicos oferecidos nesta escola.</p>
-                        </div>
-                        {!isAddingCourse && (
-                           <button 
-                             onClick={() => setIsAddingCourse(true)}
-                             className="flex items-center gap-2 text-sesi-blue font-black uppercase text-[10px] tracking-widest bg-blue-50 px-4 py-2 rounded-xl hover:bg-blue-100 transition-all border border-blue-100"
-                           >
-                             <PlusCircle size={16} /> Adicionar Nível/Curso
-                           </button>
-                        )}
+                      <div>
+                        <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter italic">Quais níveis de ensino esta unidade possui?</h3>
+                        <p className="text-sm text-slate-400 font-medium italic">Selecione pelo menos um nível para continuar</p>
                       </div>
 
-                      {isAddingCourse ? (
-                         /* INLINE BUILDER */
-                         <div className="bg-slate-50 rounded-[30px] p-8 border border-slate-200 animate-in zoom-in-95 duration-300">
-                            <div className="flex justify-between items-center mb-10 border-b border-slate-200 pb-4">
-                               <h4 className="text-xs font-black uppercase text-slate-800 tracking-widest flex items-center gap-2">
-                                  <GraduationCap size={18} className="text-sesi-red" /> Novo Nível para {schoolForm.name}
-                               </h4>
-                               <button onClick={() => setIsAddingCourse(false)} className="text-slate-300 hover:text-slate-600">
-                                  <X size={20} />
-                               </button>
-                            </div>
-
-                            <div className="space-y-8">
-                               {/* Part A: Escolha o Nível */}
-                               <div className="space-y-3">
-                                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
-                                     <span className="w-5 h-5 rounded-full bg-slate-900 text-white flex items-center justify-center text-[10px]">1</span> Escolha o Nível de Ensino
-                                  </label>
-                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                     {COURSE_TYPES.map(type => (
-                                       <button 
-                                          key={type}
-                                          type="button"
-                                          onClick={() => setCourseBuilder({...courseBuilder, type, itinerary: '', selectedLevels: DEFAULT_GRADES[type]})}
-                                          className={cn(
-                                            "px-4 py-4 rounded-2xl border-2 text-[10px] font-black uppercase transition-all text-center leading-tight",
-                                            courseBuilder.type === type ? "bg-sesi-blue border-sesi-blue text-white shadow-lg" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"
-                                          )}
-                                       >
-                                          {type}
-                                       </button>
-                                     ))}
-                                  </div>
-                               </div>
-
-                               {/* Part B: Escolha o Itinerário (Somente Ensino Médio) */}
-                               {courseBuilder.type === 'Ensino Médio' && (
-                                 <div className="space-y-3 pt-4 border-t border-slate-200 border-dashed animate-in slide-in-from-top-2">
-                                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
-                                       <span className="w-5 h-5 rounded-full bg-sesi-red text-white flex items-center justify-center text-[10px]">2</span> Categoria do Ensino Médio
-                                    </label>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                       <button 
-                                          type="button"
-                                          onClick={() => setCourseBuilder({...courseBuilder, itinerary: ''})}
-                                          className={cn(
-                                            "px-4 py-3 rounded-2xl border-2 text-[10px] font-black uppercase transition-all text-left",
-                                            !courseBuilder.itinerary ? "bg-sesi-red border-sesi-red text-white shadow-lg" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"
-                                          )}
-                                       >
-                                          Regular (Base Nacional Comum)
-                                       </button>
-                                       <div className="relative group">
-                                          <select 
-                                            value={courseBuilder.itinerary}
-                                            onChange={(e) => setCourseBuilder({...courseBuilder, itinerary: e.target.value})}
-                                            className={cn(
-                                              "w-full px-4 py-3 rounded-2xl border-2 text-[10px] font-black uppercase appearance-none outline-none transition-all",
-                                              courseBuilder.itinerary ? "bg-sesi-red border-sesi-red text-white shadow-lg" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200 focus:border-sesi-red"
-                                            )}
-                                          >
-                                            <option value="" className="text-slate-800">Selecione um Itinerário Técnico...</option>
-                                            {TECHNICAL_ITINERARIES.map(it => (
-                                              <option key={it} value={it} className="text-slate-800">Técnico em {it}</option>
-                                            ))}
-                                          </select>
-                                          {!courseBuilder.itinerary && <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-300">▼</div>}
-                                       </div>
-                                    </div>
-                                 </div>
-                               )}
-
-                               {/* Part C: Escolha as Séries */}
-                               <div className="space-y-3 pt-4 border-t border-slate-200 border-dashed">
-                                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
-                                     <span className="w-5 h-5 rounded-full bg-slate-900 text-white flex items-center justify-center text-[10px]">
-                                        {courseBuilder.type === 'Ensino Médio' ? '3' : '2'}
-                                     </span> 
-                                     Séries Disponíveis para este {courseBuilder.itinerary ? 'Itinerário' : 'Nível'}
-                                  </label>
-                                  <div className="flex flex-wrap gap-2">
-                                     {DEFAULT_GRADES[courseBuilder.type].map(grade => (
-                                       <button 
-                                          key={grade}
-                                          type="button"
-                                          onClick={() => {
-                                             if (courseBuilder.selectedLevels.includes(grade)) {
-                                                setCourseBuilder(prev => ({ ...prev, selectedLevels: prev.selectedLevels.filter(g => g !== grade) }));
-                                             } else {
-                                                setCourseBuilder(prev => ({ ...prev, selectedLevels: [...prev.selectedLevels, grade] }));
-                                             }
-                                          }}
-                                          className={cn(
-                                            "px-4 py-2 rounded-xl border text-[10px] font-bold uppercase transition-all",
-                                            courseBuilder.selectedLevels.includes(grade) ? "bg-slate-800 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-400 hover:border-slate-300"
-                                          )}
-                                       >
-                                          {grade}
-                                       </button>
-                                     ))}
-                                  </div>
-                                  <p className="text-[9px] text-slate-400 italic">Você pode criar ofertas individuais (ex: apenas 1º ano) para itinerários diferentes.</p>
-                               </div>
-
-                               <div className="pt-6">
-                                  <button 
-                                    type="button"
-                                    disabled={courseBuilder.selectedLevels.length === 0}
-                                    onClick={findOrCreateCourseInOffer}
-                                    className="w-full bg-slate-900 text-white py-4 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-black transition-all shadow-xl flex items-center justify-center gap-3 disabled:opacity-20"
-                                  >
-                                     <PlusCircle size={18} /> Adicionar esta Oferta à Unidade
-                                  </button>
-                               </div>
-                            </div>
-                         </div>
-                      ) : (
-                         /* LIST OF ADDED OFFERS */
-                         <div className="space-y-4">
-                            {schoolForm.courseIds.length === 0 ? (
-                               <div className="p-20 text-center rounded-[30px] border-2 border-dashed border-slate-100">
-                                  < GraduationCap size={48} className="mx-auto text-slate-100 mb-6" />
-                                  <p className="text-[10px] font-black uppercase text-slate-300 tracking-widest max-w-xs mx-auto">Nenhum nível educacional configurado para esta unidade ainda.</p>
-                                  <button onClick={() => setIsAddingCourse(true)} className="mt-8 text-sesi-blue font-black uppercase text-[10px] tracking-widest border-b border-sesi-blue pb-1 hover:brightness-125 transition-all">Começar Configuração</button>
-                               </div>
-                            ) : (
-                               <div className="grid gap-4">
-                                  {schoolForm.courseIds.map(cid => {
-                                     const course = courses.find(c => c.id === cid);
-                                     if (!course) return null;
-                                     return (
-                                       <div key={cid} className="group p-6 bg-white border border-slate-100 rounded-[24px] shadow-sm hover:shadow-md transition-all flex justify-between items-center">
-                                          <div>
-                                             <div className="flex items-center gap-2 mb-1">
-                                                <span className="text-[8px] font-black uppercase text-slate-300 tracking-[0.1em]">{course.type}</span>
-                                                {course.itinerary && <span className="bg-sesi-red/10 text-sesi-red text-[7px] font-black uppercase px-2 py-0.5 rounded-full">Itinerário Técnico</span>}
-                                             </div>
-                                             <h5 className="text-base font-black text-slate-800 uppercase tracking-tighter italic">{course.name}</h5>
-                                             <div className="flex flex-wrap gap-1 mt-3">
-                                                {course.levels.map(l => (
-                                                  <span key={l} className="text-[8px] bg-slate-50 text-slate-400 px-2 py-1 rounded font-black border border-slate-100">{l}</span>
-                                                ))}
-                                             </div>
-                                          </div>
-                                          <button 
-                                            onClick={() => removeCourseFromSchool(cid)}
-                                            className="p-3 text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-2xl transition-all opacity-0 group-hover:opacity-100"
-                                          >
-                                             <Trash2 size={20} />
-                                          </button>
-                                       </div>
-                                     )
-                                  })}
-                               </div>
+                      <div className="grid gap-4">
+                        {COURSE_TYPES.map(type => (
+                          <div 
+                            key={type}
+                            onClick={() => handleLevelToggle(type)}
+                            className={cn(
+                              "group relative p-8 rounded-[30px] border-2 cursor-pointer transition-all hover:scale-[1.01]",
+                              wizardData.selectedLevels.includes(type) 
+                                ? "bg-sesi-blue border-sesi-blue text-white shadow-xl shadow-sesi-blue/20" 
+                                : "bg-white border-slate-100 text-slate-600 hover:border-slate-200"
                             )}
+                          >
+                             <div className="flex justify-between items-center">
+                               <div className="flex items-center gap-4">
+                                  <div className={cn(
+                                    "w-12 h-12 rounded-2xl flex items-center justify-center transition-colors",
+                                    wizardData.selectedLevels.includes(type) ? "bg-white/20" : "bg-slate-50"
+                                  )}>
+                                     <BookOpen size={24} />
+                                  </div>
+                                  <span className="text-lg font-black uppercase tracking-tighter italic">{type}</span>
+                               </div>
+                               <div className={cn(
+                                 "w-6 h-6 rounded-full border-2 flex items-center justify-center",
+                                 wizardData.selectedLevels.includes(type) ? "bg-white border-white text-sesi-blue" : "border-slate-200"
+                               )}>
+                                  {wizardData.selectedLevels.includes(type) && <Check size={16} />}
+                               </div>
+                             </div>
+                          </div>
+                        ))}
+                      </div>
 
-                            <div className="pt-20 flex justify-between">
-                               <button 
-                                 onClick={() => setActiveStep('identity')}
-                                 className="flex items-center gap-2 px-8 py-3 text-slate-300 hover:text-slate-600 transition-colors text-[10px] font-black uppercase tracking-widest"
-                               >
-                                  <ChevronLeft size={16} /> Ajustar Unidade
-                               </button>
-                               <button 
-                                 disabled={schoolForm.courseIds.length === 0}
-                                 onClick={() => setActiveStep('review')}
-                                 className="flex items-center gap-3 px-10 py-5 bg-slate-900 text-white rounded-2xl text-[12px] font-black uppercase tracking-widest hover:bg-black shadow-xl group disabled:opacity-20 transition-all"
-                               >
-                                 Próximo: Revisar Resumo <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-                               </button>
-                            </div>
-                         </div>
-                      )}
+                      <div className="pt-10 flex justify-between">
+                         <button onClick={() => setActiveStep('identity')} className="text-[11px] font-black text-slate-300 uppercase tracking-widest hover:text-slate-900">Voltar</button>
+                         <button 
+                           disabled={wizardData.selectedLevels.length === 0}
+                           onClick={() => setActiveStep('grades')}
+                           className="flex items-center gap-3 px-12 py-5 bg-slate-900 text-white rounded-2xl text-[12px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl disabled:opacity-20"
+                         >
+                           Próximo <ArrowRight size={18} />
+                         </button>
+                      </div>
                     </motion.div>
                  )}
 
-                 {/* STEP 3: REVIEW */}
+                 {/* TELA 3: SELECIONAR SÉRIES POR NÍVEL */}
+                 {activeStep === 'grades' && (
+                    <motion.div 
+                      key="grades"
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      className="space-y-10"
+                    >
+                      <div>
+                        <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter italic">Quais séries estarão disponíveis?</h3>
+                        <p className="text-sm text-slate-400 font-medium italic">Defina a oferta por nível para a unidade {wizardData.name}</p>
+                      </div>
+
+                      <div className="space-y-10">
+                        {wizardData.selectedLevels.map(level => (
+                          <div key={level} className="space-y-4">
+                             <div className="flex items-center gap-2 text-slate-400">
+                                <GraduationCap size={16} />
+                                <span className="text-[10px] font-black uppercase tracking-[0.2em]">{level}</span>
+                             </div>
+                             <div className="flex flex-wrap gap-3">
+                                {DEFAULT_GRADES[level].map(grade => (
+                                  <button 
+                                    key={grade}
+                                    onClick={() => handleGradeToggle(level, grade)}
+                                    className={cn(
+                                      "px-6 py-4 rounded-2xl border-2 text-[11px] font-black uppercase transition-all",
+                                      wizardData.gradesByLevel[level]?.includes(grade)
+                                        ? "bg-slate-900 border-slate-900 text-white shadow-lg"
+                                        : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"
+                                    )}
+                                  >
+                                    {grade}
+                                  </button>
+                                ))}
+                             </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="pt-10 flex justify-between">
+                         <button onClick={() => setActiveStep('levels')} className="text-[11px] font-black text-slate-300 uppercase tracking-widest hover:text-slate-900">Voltar</button>
+                         <button 
+                           onClick={() => {
+                             if (wizardData.selectedLevels.includes('Ensino Médio')) setActiveStep('tech');
+                             else setActiveStep('review');
+                           }}
+                           className="flex items-center gap-3 px-12 py-5 bg-slate-900 text-white rounded-2xl text-[12px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl"
+                         >
+                           Próximo <ArrowRight size={18} />
+                         </button>
+                      </div>
+                    </motion.div>
+                 )}
+
+                 {/* TELA 4: CURSOS TÉCNICOS (APENAS ENSINO MÉDIO) */}
+                 {activeStep === 'tech' && (
+                    <motion.div 
+                      key="tech"
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      className="space-y-10"
+                    >
+                      <div>
+                        <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter italic">Cursos técnicos disponíveis</h3>
+                        <p className="text-sm text-slate-400 font-medium italic">Vincule itinerários técnicos aos anos do Ensino Médio</p>
+                      </div>
+
+                      <div className="space-y-12">
+                        {(wizardData.gradesByLevel['Ensino Médio'] || []).map(grade => (
+                          <div key={grade} className="p-8 bg-slate-50/50 rounded-[30px] border border-slate-100 space-y-6">
+                             <div className="border-l-4 border-sesi-red pl-4">
+                                <h4 className="text-lg font-black uppercase tracking-tighter italic text-slate-800">{grade} • Ensino Médio</h4>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Escolha os cursos para esta série</p>
+                             </div>
+
+                             <div className="grid sm:grid-cols-2 gap-3">
+                                {TECHNICAL_ITINERARIES.map(tech => (
+                                  <button 
+                                    key={tech}
+                                    onClick={() => handleTechToggle(grade, tech)}
+                                    className={cn(
+                                      "p-4 rounded-xl border-2 text-[10px] font-black uppercase transition-all text-left flex items-center justify-between group",
+                                      wizardData.techByGrade[grade]?.includes(tech)
+                                        ? "bg-sesi-red border-sesi-red text-white shadow-lg"
+                                        : "bg-white border-slate-200 text-slate-400 hover:border-sesi-red/30"
+                                    )}
+                                  >
+                                    {tech}
+                                    {wizardData.techByGrade[grade]?.includes(tech) ? (
+                                       <Check size={14} />
+                                    ) : (
+                                       <Plus size={14} className="opacity-0 group-hover:opacity-100" />
+                                    )}
+                                  </button>
+                                ))}
+                             </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="pt-10 flex justify-between">
+                         <button onClick={() => setActiveStep('grades')} className="text-[11px] font-black text-slate-300 uppercase tracking-widest hover:text-slate-900">Voltar</button>
+                         <button 
+                           onClick={() => setActiveStep('review')}
+                           className="flex items-center gap-3 px-12 py-5 bg-slate-900 text-white rounded-2xl text-[12px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl"
+                         >
+                           Finalizar Cadastro <CheckCircle size={18} />
+                         </button>
+                      </div>
+                    </motion.div>
+                 )}
+
+                 {/* TELA FINAL: RESUMO E SALVAMENTO */}
                  {activeStep === 'review' && (
                     <motion.div 
                       key="review"
@@ -600,66 +606,65 @@ export default function AdminSchools() {
                          <div className="w-20 h-20 bg-green-500 text-white rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-green-500/30">
                             <CheckCircle size={32} />
                          </div>
-                         <h3 className="text-3xl font-black text-slate-900 uppercase tracking-tighter italic">Resumo Estrutural</h3>
-                         <p className="text-sm text-slate-400 font-medium italic">Confirme se as configurações da unidade {schoolForm.name} estão corretas.</p>
+                         <h3 className="text-3xl font-black text-slate-900 uppercase tracking-tighter italic">Resumo Final</h3>
+                         <p className="text-sm text-slate-400 font-medium italic">Verifique os dados da unidade {wizardData.name} antes de salvar.</p>
                       </div>
 
                       <div className="bg-slate-900 text-white rounded-[40px] p-10 space-y-10 shadow-2xl">
                          <div className="grid md:grid-cols-2 gap-10 border-b border-white/10 pb-10">
                             <div>
-                               <p className="text-[10px] font-black uppercase text-blue-300 tracking-[0.2em] mb-3">Identidade da Unidade</p>
-                               <h4 className="text-2xl font-black uppercase italic tracking-tighter">{schoolForm.name}</h4>
-                               <p className="text-xs font-bold text-slate-400 uppercase tracking-[0.15em] mt-1 italic">{schoolForm.city}, PE</p>
+                               <p className="text-[10px] font-black uppercase text-blue-300 tracking-[0.2em] mb-2">Unidade SESI</p>
+                               <h4 className="text-2xl font-black uppercase italic tracking-tighter leading-none">{wizardData.name}</h4>
+                               <p className="text-xs font-bold text-slate-400 uppercase mt-1 italic">{wizardData.city}, Pernambuco</p>
                             </div>
                             <div>
-                               <p className="text-[10px] font-black uppercase text-blue-300 tracking-[0.2em] mb-3">Status de Matrícula</p>
-                               <div className="flex items-center gap-3">
-                                  <div className={cn("w-3 h-3 rounded-full animate-pulse", schoolForm.active ? "bg-green-500" : "bg-amber-500")} />
-                                  <span className="text-sm font-black uppercase italic">{schoolForm.active ? 'Ativa na Rede' : 'Apenas Administrativa'}</span>
+                               <p className="text-[10px] font-black uppercase text-blue-300 tracking-[0.2em] mb-2">Status Inicial</p>
+                               <div className="flex items-center gap-2">
+                                  <div className={cn("w-3 h-3 rounded-full", wizardData.active ? "bg-green-500" : "bg-amber-500")} />
+                                  <span className="text-sm font-black uppercase italic">{wizardData.active ? 'Ativada para Cadastro' : 'Apenas Interna'}</span>
                                </div>
                             </div>
                          </div>
 
                          <div>
-                            <p className="text-[10px] font-black uppercase text-blue-300 tracking-[0.2em] mb-6">Grade Educacional Vinculada ({schoolForm.courseIds.length} Níveis)</p>
-                            <div className="grid sm:grid-cols-2 gap-x-12 gap-y-6">
-                               {schoolForm.courseIds.map(cid => {
-                                  const course = courses.find(c => c.id === cid);
-                                  return (
-                                    <div key={cid} className="flex flex-col border-l-2 border-white/10 pl-6 space-y-1">
-                                       <p className="text-[12px] font-black uppercase italic leading-none">{course?.name}</p>
-                                       <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{course?.levels.length} Séries Ativas</p>
-                                    </div>
-                                  )
-                                })}
+                            <p className="text-[10px] font-black uppercase text-blue-300 tracking-[0.2em] mb-6">Oferta Educacional</p>
+                            <div className="grid gap-6">
+                               {wizardData.selectedLevels.map(level => (
+                                 <div key={level} className="flex flex-col border-l-2 border-white/10 pl-6">
+                                    <p className="text-sm font-black uppercase italic leading-none">{level}</p>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                                       {(wizardData.gradesByLevel[level] || []).join(', ')}
+                                    </p>
+                                 </div>
+                               ))}
                             </div>
                          </div>
                       </div>
 
                       <div className="flex justify-between items-center pt-6">
                          <button 
-                            onClick={() => setActiveStep('structure')}
-                            className="text-[11px] font-black text-slate-400 uppercase tracking-widest hover:text-slate-900 transition-colors"
+                           onClick={() => setActiveStep(wizardData.selectedLevels.includes('Ensino Médio') ? 'tech' : 'grades')} 
+                           className="text-[11px] font-black text-slate-300 uppercase tracking-widest hover:text-slate-900"
                          >
-                            Alterar Estrutura
+                            Alterar Oferta
                          </button>
                          <button 
-                            onClick={handleSaveSchool}
+                            onClick={handleFinalize}
                             className="px-14 py-6 bg-sesi-red text-white rounded-[24px] text-base font-black uppercase tracking-[0.2em] hover:brightness-110 shadow-2xl shadow-sesi-red/40 transition-all active:scale-95 flex items-center gap-4"
                          >
-                            <Save size={24} /> Finalizar e Ativar
+                            <Save size={24} /> Salvar Unidade
                          </button>
                       </div>
                     </motion.div>
                  )}
 
                </AnimatePresence>
-            </div>
+             </div>
           </div>
-
+          
           <div className="mt-12 flex flex-col items-center gap-3 text-slate-300 opacity-40">
              <Wand2 size={18} className="text-sesi-blue" />
-             <p className="text-[10px] font-black uppercase tracking-[0.3em] italic">Gerenciamento Integrado de Estruturas SESI Rede</p>
+             <p className="text-[10px] font-black uppercase tracking-[0.3em] italic">Configuração Guiada SESI Rede v4.0</p>
           </div>
         </div>
       )}
