@@ -10,26 +10,36 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Add health check
+  console.log(`Starting server in ${process.env.NODE_ENV || 'development'} mode...`);
+
+  // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });
 
+  // Logging
   app.use((req, res, next) => {
-    console.log(`${req.method} ${req.url}`);
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
     next();
   });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    console.log("Setting up Vite middleware...");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
 
-    app.use('*', async (req, res, next) => {
+    app.get('*', async (req, res, next) => {
       const url = req.originalUrl;
+      
+      // Ignore API routes
+      if (url.startsWith('/api/')) {
+        return next();
+      }
+
       try {
         const fs = await import('fs');
         let template = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf-8');
@@ -41,7 +51,7 @@ async function startServer() {
       }
     });
   } else {
-    // Basic static serving for production
+    console.log("Serving static files from dist...");
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
@@ -50,7 +60,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+    console.log(`Server started and listening on http://0.0.0.0:${PORT}`);
   });
 }
 
