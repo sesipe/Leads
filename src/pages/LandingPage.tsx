@@ -9,9 +9,10 @@ export default function LandingPage() {
   const [schools, setSchools] = useState<SchoolType[]>([]);
   const [courses, setCourses] = useState<CourseType[]>([]);
   const [availableCourses, setAvailableCourses] = useState<CourseType[]>([]);
+  const [availableGrades, setAvailableGrades] = useState<string[]>([]);
   const [selectedSchool, setSelectedSchool] = useState('');
-  const [selectedCourse, setSelectedCourse] = useState('');
   const [selectedGrade, setSelectedGrade] = useState('');
+  const [selectedCourse, setSelectedCourse] = useState('');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -41,33 +42,62 @@ export default function LandingPage() {
     fetchData();
   }, []);
 
-  // Filter courses whenever selectedSchool changes
+  // Filter grades and reset selections when selectedSchool changes
   useEffect(() => {
     if (!selectedSchool) {
+      setAvailableGrades([]);
       setAvailableCourses([]);
       return;
     }
 
     const school = schools.find(s => s.id === selectedSchool);
     if (school && school.courseIds) {
-      const filtered = courses.filter(c => school.courseIds?.includes(c.id));
+      const schoolCourses = courses.filter(c => school.courseIds?.includes(c.id));
+      
+      // Get all unique grades available in this school across all its courses
+      const allGrades = Array.from(new Set(schoolCourses.flatMap(c => c.levels))) as string[];
+      
+      // Sort grades numerically if possible (rough sort)
+      const sortedGrades = allGrades.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      
+      setAvailableGrades(sortedGrades);
+    } else {
+      setAvailableGrades([]);
+    }
+    
+    setSelectedGrade('');
+    setSelectedCourse('');
+    setAvailableCourses([]);
+  }, [selectedSchool, schools, courses]);
+
+  // Filter courses when selectedGrade changes
+  useEffect(() => {
+    if (!selectedGrade || !selectedSchool) {
+      setAvailableCourses([]);
+      return;
+    }
+
+    const school = schools.find(s => s.id === selectedSchool);
+    if (school && school.courseIds) {
+      const schoolCourses = courses.filter(c => school.courseIds?.includes(c.id));
+      // Show only courses that contain the selected grade
+      const filtered = schoolCourses.filter(c => c.levels.includes(selectedGrade));
       setAvailableCourses(filtered);
     } else {
-      // If no mapping yet, show all or none? 
-      // User said: "eu preciso ligar os cursos as unidades/ escolas"
-      // So if not linked, maybe none are available.
       setAvailableCourses([]);
     }
     
     setSelectedCourse('');
-    setSelectedGrade('');
-  }, [selectedSchool, schools, courses]);
+  }, [selectedGrade, selectedSchool, schools, courses]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.consent) return;
     setSubmitting(true);
     try {
+      const school = schools.find(s => s.id === selectedSchool);
+      const course = courses.find(c => c.id === selectedCourse);
+
       await addDoc(collection(db, 'leads'), {
         ...formData,
         schoolId: selectedSchool,
@@ -76,6 +106,25 @@ export default function LandingPage() {
         createdAt: serverTimestamp(),
         status: 'Pendente'
       });
+
+      // Send confirmation email via our API
+      try {
+        await fetch('/api/send-confirmation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: formData.email,
+            name: formData.name,
+            schoolName: school?.name || 'Unidade SESI',
+            gradeName: selectedGrade,
+            courseName: course?.name || 'Curso Regular'
+          })
+        });
+      } catch (emailErr) {
+        // We don't block the UI if the email fails, but we log it
+        console.error("Email confirmation failed:", emailErr);
+      }
+
       setSuccess(true);
     } catch (err) {
       console.error(err);
@@ -235,34 +284,32 @@ export default function LandingPage() {
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="space-y-1">
-                                    <label className="text-[10px] font-bold uppercase text-slate-400">Curso</label>
-                                    <select 
-                                        required
-                                        value={selectedCourse}
-                                        onChange={e => {
-                                            setSelectedCourse(e.target.value);
-                                            setSelectedGrade('');
-                                        }}
-                                        className="w-full px-3 py-2 text-sm rounded border border-slate-200 bg-slate-50 outline-none focus:border-sesi-blue transition-all"
-                                    >
-                                        <option value="">Selecione o nível</option>
-                                        {availableCourses.map(c => (
-                                            <option key={c.id} value={c.id}>{c.name}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div className="space-y-1">
                                     <label className="text-[10px] font-bold uppercase text-slate-400">Série</label>
                                     <select 
                                         required
-                                        disabled={!selectedCourse}
+                                        disabled={!selectedSchool}
                                         value={selectedGrade}
                                         onChange={e => setSelectedGrade(e.target.value)}
                                         className="w-full px-3 py-2 text-sm rounded border border-slate-200 bg-slate-50 outline-none focus:border-sesi-blue transition-all disabled:opacity-50"
                                     >
-                                        <option value="">Série desejada</option>
-                                        {courses.find(c => c.id === selectedCourse)?.levels.map(l => (
-                                            <option key={l} value={l}>{l}</option>
+                                        <option value="">Selecione a série</option>
+                                        {availableGrades.map(g => (
+                                            <option key={g} value={g}>{g}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold uppercase text-slate-400">Curso / Oferta</label>
+                                    <select 
+                                        required
+                                        disabled={!selectedGrade}
+                                        value={selectedCourse}
+                                        onChange={e => setSelectedCourse(e.target.value)}
+                                        className="w-full px-3 py-2 text-sm rounded border border-slate-200 bg-slate-50 outline-none focus:border-sesi-blue transition-all disabled:opacity-50"
+                                    >
+                                        <option value="">Selecione o curso</option>
+                                        {availableCourses.map(c => (
+                                            <option key={c.id} value={c.id}>{c.name}</option>
                                         ))}
                                     </select>
                                 </div>

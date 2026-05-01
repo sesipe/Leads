@@ -35,4 +35,12 @@ export interface Lead {
 export interface AppSettings {
   confirmationEmailTemplate: string;
   confirmationWhatsappTemplate: string;
+  emailConfig?: {
+    host: string;
+    port: number;
+    user: string;
+    pass: string;
+    fromName: string;
+    fromEmail: string;
+  };
 }
