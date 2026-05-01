@@ -13,10 +13,20 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
         (request.auth.token.email == 'maykon.euro@gmail.com' && request.auth.token.email_verified == true) ||
-        (request.auth.token.email == 'tablet.diretoriaeducacao@gmail.com' && request.auth.token.email_verified == true)
+        (request.auth.token.email == 'tablet.diretoriaeducacao@gmail.com' && request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
       );
+    }
+
+    function getUserProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isSchoolAdmin(schoolId) {
+      let profile = getUserProfile();
+      return isSignedIn() && (profile.role == 'admin' || (profile.role == 'operator' && profile.schoolId == schoolId));
     }
 
     function isValidId(id) {
@@ -87,10 +97,16 @@ service cloud.firestore {
     // Leads
     match /leads/{leadId} {
       allow create: if isValidLead(incoming());
-      allow list: if isAdmin();
-      allow get: if isAdmin();
-      allow update: if isAdmin() && isValidLead(incoming());
+      allow list: if isSignedIn() && (isAdmin() || getUserProfile().schoolId == resource.data.schoolId);
+      allow get: if isSignedIn() && (isAdmin() || getUserProfile().schoolId == resource.data.schoolId);
+      allow update: if isSignedIn() && (isAdmin() || getUserProfile().schoolId == existing().schoolId) && isValidLead(incoming());
       allow delete: if isAdmin();
+    }
+
+    // Users
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
     }
 
     // Admins

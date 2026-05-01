@@ -1,30 +1,36 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../providers/AuthProvider';
-import { LayoutDashboard, Users, School, Settings, LogOut, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Users, School, Settings, LogOut, Menu, X, UserCog } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { logout } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
 
 export default function AdminLayout() {
-  const { user, isAdmin, loading } = useAuth();
+  const { user, profile, isAdmin, isOperator, loading } = useAuth();
   const navigate = useNavigate();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    if (!loading && (!user || !isAdmin)) {
+    if (!loading && (!user || (!isAdmin && !isOperator))) {
       navigate('/login');
     }
-  }, [user, isAdmin, loading, navigate]);
+  }, [user, isAdmin, isOperator, loading, navigate]);
 
   if (loading) return <div className="h-screen w-screen flex items-center justify-center">Carregando...</div>;
-  if (!user || !isAdmin) return null;
+  if (!user || (!isAdmin && !isOperator)) return null;
 
   const navItems = [
     { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/admin/leads', icon: Users, label: 'Leads' },
-    { to: '/admin/schools', icon: School, label: 'Escolas e Cursos' },
-    { to: '/admin/settings', icon: Settings, label: 'Configurações' },
   ];
+
+  if (isAdmin) {
+    navItems.push(
+      { to: '/admin/schools', icon: School, label: 'Escolas e Cursos' },
+      { to: '/admin/users', icon: UserCog, label: 'Equipe' },
+      { to: '/admin/settings', icon: Settings, label: 'Configurações' }
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans">

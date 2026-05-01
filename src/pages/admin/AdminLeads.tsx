@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, query, orderBy, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, deleteDoc, doc, updateDoc, where } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Lead, LeadStatus, School, Course } from '../../types';
 import { Search, Filter, Download, MoreHorizontal, Mail, MessageCircle, Trash2, CheckCircle, ChevronDown, ChevronUp, Save, Send } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '../../lib/utils';
+import { useAuth } from '../../components/providers/AuthProvider';
 
 export default function AdminLeads() {
+  const { profile, isAdmin } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -20,12 +22,26 @@ export default function AdminLeads() {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [profile, isAdmin]);
 
   async function fetchData() {
     setLoading(true);
     try {
-      const q = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
+      let q;
+      if (isAdmin) {
+        q = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
+      } else if (profile?.schoolId) {
+        q = query(
+          collection(db, 'leads'), 
+          where('schoolId', '==', profile.schoolId),
+          orderBy('createdAt', 'desc')
+        );
+      } else {
+        setLeads([]);
+        setLoading(false);
+        return;
+      }
+
       const [leadsSnap, schoolsSnap, coursesSnap] = await Promise.all([
         getDocs(q),
         getDocs(collection(db, 'schools')),
@@ -35,11 +51,14 @@ export default function AdminLeads() {
       setSchools(schoolsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as School)));
       setCourses(coursesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Course)));
 
-      const fetchedLeads = leadsSnap.docs.map(doc => ({ 
-        id: doc.id, 
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : new Date(doc.data().createdAt)
-      } as Lead));
+      const fetchedLeads = leadsSnap.docs.map(doc => {
+        const data = doc.data() as any;
+        return { 
+          id: doc.id, 
+          ...data,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt)
+        } as Lead;
+      });
       
       setLeads(fetchedLeads);
     } catch (err) {

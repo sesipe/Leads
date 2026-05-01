@@ -62,6 +62,19 @@
         "confirmationWhatsappTemplate": { "type": "string", "description": "WhatsApp message template" }
       },
       "required": ["confirmationEmailTemplate", "confirmationWhatsappTemplate"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User permissions and assigned school",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "operator"] },
+        "schoolId": { "type": "string" },
+        "name": { "type": "string" }
+      },
+      "required": ["uid", "email", "role", "name"]
     }
   },
   "firestore": {
@@ -80,6 +93,10 @@
     "settings": {
       "schema": "Settings",
       "description": "Application settings"
+    },
+    "users": {
+      "schema": "UserProfile",
+      "description": "User profiles and roles"
     }
   }
 }

@@ -1,50 +1,70 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, where } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Lead, School } from '../../types';
-import { Users, School as SchoolIcon, GraduationCap, TrendingUp } from 'lucide-react';
+import { Users, School as SchoolIcon, GraduationCap, TrendingUp, Building2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { format, subDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '../../lib/utils';
+import { useAuth } from '../../components/providers/AuthProvider';
 
 export default function AdminDashboard() {
+  const { profile, isAdmin } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function fetchData() {
+      setLoading(true);
       try {
-        const qLeads = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
+        let leadsQuery;
+        if (isAdmin) {
+          leadsQuery = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
+        } else if (profile?.schoolId) {
+          leadsQuery = query(
+            collection(db, 'leads'), 
+            where('schoolId', '==', profile.schoolId),
+            orderBy('createdAt', 'desc')
+          );
+        } else {
+          setLoading(false);
+          return;
+        }
+
         const [leadsSnap, schoolsSnap] = await Promise.all([
-          getDocs(qLeads),
+          getDocs(leadsQuery),
           getDocs(collection(db, 'schools'))
         ]);
 
         setSchools(schoolsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as School)));
 
-        const fetchedLeads = leadsSnap.docs.map(doc => ({ 
-          id: doc.id, 
-          ...doc.data(),
-          createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : new Date(doc.data().createdAt)
-        } as Lead));
+        const fetchedLeads = leadsSnap.docs.map(doc => {
+          const data = doc.data() as any;
+          return { 
+            id: doc.id, 
+            ...data,
+            createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt)
+          } as Lead;
+        });
         
         setLeads(fetchedLeads);
       } catch (err) {
-        console.error(err);
+        console.error("Erro dashboard:", err);
       } finally {
         setLoading(false);
       }
     }
     fetchData();
-  }, []);
+  }, [profile, isAdmin]);
 
-  if (loading) return <div className="h-full flex items-center justify-center p-20 uppercase text-[10px] font-bold text-slate-400 animate-pulse">Calculando métricas de rede...</div>;
+  if (loading) return <div className="h-full flex items-center justify-center p-20 uppercase text-[10px] font-bold text-slate-400 animate-pulse">Calculando métricas...</div>;
 
   const totalLeads = leads.length;
+  const userSchool = schools.find(s => s.id === profile?.schoolId);
   
-  // Aggregate by school
+  // Aggregate by school (only relevant for global admin)
   const schoolStats = leads.reduce((acc: any, lead) => {
     const schoolName = schools.find(s => s.id === lead.schoolId)?.name || lead.schoolId;
     acc[schoolName] = (acc[schoolName] || 0) + 1;
@@ -71,8 +91,12 @@ export default function AdminDashboard() {
     <div className="space-y-8 max-w-7xl">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Visão Geral</h1>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Status em tempo real das unidades SESI PE</p>
+          <h1 className="text-2xl font-bold text-slate-800 tracking-tight">
+            {isAdmin ? 'Painel de Rede' : `Painel: ${userSchool?.name || 'Unidade'}`}
+          </h1>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
+            {isAdmin ? 'Status global das unidades SESI Pernambuco' : 'Monitoramento de captação local'}
+          </p>
         </div>
         <div className="flex items-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded text-[10px] font-bold text-slate-500 uppercase tracking-tighter">
             <TrendingUp size={14} className="text-green-500" />
@@ -83,11 +107,15 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard title="Captação Total" value={totalLeads} icon={Users} color="blue" />
         <StatCard title="Novas 24h" value={dailyStats[dailyStats.length - 1]?.count || 0} icon={TrendingUp} color="green" />
-        <StatCard title="Unidades Ativas" value={schools.filter(s => s.active).length} icon={SchoolIcon} color="purple" />
+        {isAdmin ? (
+          <StatCard title="Unidades Ativas" value={schools.filter(s => s.active).length} icon={SchoolIcon} color="purple" />
+        ) : (
+          <StatCard title="Série mais buscada" value={leads.length > 0 ? leads.sort((a,b) => leads.filter(v => v.grade===a.grade).length - leads.filter(v => v.grade===b.grade).length).pop()?.grade : 'N/A'} icon={GraduationCap} color="purple" />
+        )}
         <StatCard title="Engajamento" value="78%" icon={GraduationCap} color="orange" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className={cn("grid grid-cols-1 gap-6", isAdmin ? "lg:grid-cols-2" : "grid-cols-1")}>
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           <div className="bg-slate-100 px-5 py-3 border-b border-slate-200 flex justify-between items-center">
               <h3 className="font-bold text-slate-700 text-[10px] uppercase tracking-wider italic">Fluxo de Interessados (7 dias)</h3>
@@ -108,23 +136,25 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-          <div className="bg-slate-100 px-5 py-3 border-b border-slate-200 flex justify-between items-center">
-              <h3 className="font-bold text-slate-700 text-[10px] uppercase tracking-wider italic">Demanda por Unidade</h3>
-              <div className="bg-orange-100 text-orange-700 text-[9px] px-2 py-0.5 rounded font-bold uppercase">Ranking SESI</div>
+        {isAdmin && (
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+            <div className="bg-slate-100 px-5 py-3 border-b border-slate-200 flex justify-between items-center">
+                <h3 className="font-bold text-slate-700 text-[10px] uppercase tracking-wider italic">Demanda por Unidade</h3>
+                <div className="bg-orange-100 text-orange-700 text-[9px] px-2 py-0.5 rounded font-bold uppercase">Ranking SESI</div>
+            </div>
+            <div className="p-8 h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={schoolChartData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 8, fill: '#94a3b8', fontWeight: 700 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }} />
+                  <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ fontSize: '10px', borderRadius: '8px', border: 'none' }} />
+                  <Bar dataKey="count" fill="#da291c" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-          <div className="p-8 h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={schoolChartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 8, fill: '#94a3b8', fontWeight: 700 }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }} />
-                <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ fontSize: '10px', borderRadius: '8px', border: 'none' }} />
-                <Bar dataKey="count" fill="#da291c" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

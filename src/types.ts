@@ -1,4 +1,14 @@
 export type ResponsibleCategory = 'Pai' | 'Mãe' | 'Responsável Legal' | 'Outro';
+export type UserRole = 'admin' | 'operator';
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  role: UserRole;
+  schoolId?: string; // Se for operador, qual escola ele cuida
+  name: string;
+}
+
 export type LeadStatus = 'Pendente' | 'Contatado' | 'Matriculado' | 'Desistente';
 
 export interface School {
