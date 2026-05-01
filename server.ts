@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import nodemailer from "nodemailer";
 import admin from "firebase-admin";
 import fs from "fs";
+import cors from "cors";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,25 +32,28 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Middleware for parsing JSON
+  // Basic Middlewares
+  app.use(cors());
   app.use(express.json());
 
-  // Logging Middleware (Move to top)
+  // Logging Middleware
   app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     next();
   });
 
   console.log(`Starting server in ${process.env.NODE_ENV || 'development'} mode...`);
 
+  const apiRouter = express.Router();
+
   // API Route: Admin Create User
-  app.post("/api/admin/create-user", async (req, res) => {
+  apiRouter.post("/admin/create-user", async (req, res) => {
     const { email, password, name, role, schoolId } = req.body;
 
     if (!db) return res.status(500).json({ error: "Firebase Admin not initialized" });
     
     try {
-      console.log(`Tentando criar usuário: ${email} (${role})`);
+      console.log(`[API] Creating user: ${email} (${role})`);
       
       // 1. Create user in Firebase Auth
       const userRecord = await admin.auth().createUser({
@@ -58,7 +62,7 @@ async function startServer() {
         displayName: name,
       });
 
-      console.log(`Usuário criado no Auth com UID: ${userRecord.uid}`);
+      console.log(`[API] Auth user created: ${userRecord.uid}`);
 
       // 2. Create profile in Firestore
       await db.collection('users').doc(userRecord.uid).set({
@@ -70,16 +74,17 @@ async function startServer() {
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      console.log(`Perfil criado no Firestore para UID: ${userRecord.uid}`);
+      console.log(`[API] Firestore profile created: ${userRecord.uid}`);
       res.json({ success: true, uid: userRecord.uid });
     } catch (error: any) {
-      console.error("ERRO CRÍTICO na criação de usuário:", error);
+      console.error("[API] ERROR creating user:", error);
       
       let clientMessage = "Erro ao processar criação de usuário.";
       if (error.code === 'auth/email-already-exists') clientMessage = "Este e-mail já está cadastrado.";
       if (error.code === 'auth/invalid-password') clientMessage = "A senha deve ter pelo menos 6 caracteres.";
+      if (error.code === 'auth/invalid-email') clientMessage = "E-mail inválido.";
       
-      res.status(500).json({ 
+      res.status(400).json({ 
         success: false,
         error: clientMessage,
         details: error.message 
@@ -88,17 +93,14 @@ async function startServer() {
   });
 
   // Health check
-  app.get("/api/health", (req, res) => {
+  apiRouter.get("/health", (req, res) => {
     res.json({ status: "ok" });
   });
 
   // API Route: Test Email Configuration
-  app.post("/api/test-email", async (req, res) => {
+  apiRouter.post("/test-email", async (req, res) => {
     const { config, testEmail } = req.body;
-
-    if (!config || !testEmail) {
-      return res.status(400).json({ error: "Configuration and test email are required" });
-    }
+    if (!config || !testEmail) return res.status(400).json({ error: "Configuration and test email are required" });
 
     try {
       const transporter = nodemailer.createTransport({
@@ -110,11 +112,7 @@ async function startServer() {
           pass: config.pass,
         },
       });
-
-      // Verify connection configuration
       await transporter.verify();
-
-      // Send actual test email
       await transporter.sendMail({
         from: `"${config.fromName}" <${config.fromEmail}>`,
         to: testEmail,
@@ -122,26 +120,19 @@ async function startServer() {
         text: "Sua configuração de e-mail foi validada com sucesso!",
         html: "<b>Sua configuração de e-mail foi validada com sucesso!</b>",
       });
-
       res.json({ success: true });
-    } catch (error) {
-      console.error("SMTP Test Error:", error);
-      res.status(500).json({ 
-        error: error instanceof Error ? error.message : "Falha na conexão SMTP" 
-      });
+    } catch (error: any) {
+      console.error("[API] SMTP Test Error:", error);
+      res.status(500).json({ error: error.message || "Falha na conexão SMTP" });
     }
   });
 
   // API Route: Send Confirmation Email
-  app.post("/api/send-confirmation", async (req, res) => {
+  apiRouter.post("/send-confirmation", async (req, res) => {
     const { email, name, schoolName, gradeName, courseName } = req.body;
-
-    if (!email || !name) {
-      return res.status(400).json({ error: "Email and name are required" });
-    }
+    if (!email || !name) return res.status(400).json({ error: "Email and name are required" });
 
     try {
-      // Default to env variables
       let emailConfig = {
         host: process.env.EMAIL_HOST,
         port: Number(process.env.EMAIL_PORT) || 587,
@@ -152,90 +143,55 @@ async function startServer() {
       };
 
       let customTemplate = null;
-
-      // Try to sync with Firestore settings if available
       if (db) {
-        try {
-          const settingsSnap = await db.collection('settings').doc('app').get();
-          if (settingsSnap.exists) {
-            const data = settingsSnap.data();
-            if (data?.emailConfig) {
-               const cfg = data.emailConfig;
-               emailConfig = {
-                 host: cfg.host || emailConfig.host,
-                 port: Number(cfg.port) || emailConfig.port,
-                 user: cfg.user || emailConfig.user,
-                 pass: cfg.pass || emailConfig.pass,
-                 fromName: cfg.fromName || emailConfig.fromName,
-                 fromEmail: cfg.fromEmail || emailConfig.fromEmail
-               };
-            }
-            if (data?.confirmationEmailTemplate) {
-              customTemplate = data.confirmationEmailTemplate;
-            }
+        const settingsSnap = await db.collection('settings').doc('app').get();
+        if (settingsSnap.exists) {
+          const data = settingsSnap.data();
+          if (data?.emailConfig) {
+             const cfg = data.emailConfig;
+             emailConfig = { ...emailConfig, ...cfg, port: Number(cfg.port || emailConfig.port) };
           }
-        } catch (dbErr) {
-          console.error("Error reading settings from Firestore:", dbErr);
+          if (data?.confirmationEmailTemplate) customTemplate = data.confirmationEmailTemplate;
         }
       }
 
-      // Lazy initialization of transporter
       const transporter = nodemailer.createTransport({
         host: emailConfig.host,
         port: emailConfig.port,
         secure: emailConfig.port === 465,
-        auth: {
-          user: emailConfig.user,
-          pass: emailConfig.pass,
-        },
+        auth: { user: emailConfig.user, pass: emailConfig.pass },
       });
 
-      const processedTemplate = customTemplate 
-        ? customTemplate
-            .replace(/\{name\}/g, name)
-            .replace(/\{schoolName\}/g, schoolName)
-            .replace(/\{gradeName\}/g, gradeName)
-            .replace(/\{courseName\}/g, courseName)
-        : null;
+      const htmlContent = customTemplate 
+        ? customTemplate.replace(/\{name\}/g, name).replace(/\{schoolName\}/g, schoolName).replace(/\{gradeName\}/g, gradeName).replace(/\{courseName\}/g, courseName)
+        : `<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;"><h2>Olá, ${name}!</h2><p>Ficamos muito felizes com o seu interesse na Rede SESI de Educação.</p><p>Confirmamos o recebimento dos seus dados.</p></div>`;
 
-      const htmlContent = processedTemplate || `
-          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-            <h2 style="color: #E30613;">Olá, ${name}!</h2>
-            <p>Ficamos muito felizes com o seu interesse na Rede SESI de Educação.</p>
-            <p>Confirmamos o recebimento dos seus dados para a seguinte unidade:</p>
-            <div style="background-color: #f9f9f9; padding: 15px; border-radius: 8px; margin: 20px 0;">
-              <p><strong>Unidade:</strong> ${schoolName}</p>
-              <p><strong>Série:</strong> ${gradeName}</p>
-              <p><strong>Curso/Oferta:</strong> ${courseName}</p>
-            </div>
-            <p>Em breve, nossa equipe entrará em contato para fornecer mais informações sobre o processo de matrícula e tirar suas dúvidas.</p>
-            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-            <p style="font-size: 12px; color: #666;">Este é um e-mail automático. Por favor, não responda.</p>
-            <p style="font-size: 12px; color: #666;"><strong>SESI Pernambuco</strong> - Transformando a Educação.</p>
-          </div>
-      `;
+      if (!emailConfig.user || !emailConfig.pass) {
+        console.log("[API] Skip email (no credentials)");
+        return res.json({ success: true, message: "Logged" });
+      }
 
-      const mailOptions = {
+      await transporter.sendMail({
         from: `"${emailConfig.fromName}" <${emailConfig.fromEmail}>`,
         to: email,
         subject: "Confirmação de Interesse - SESI Pernambuco",
         html: htmlContent,
-      };
-
-      // If no credentials anywhere, log and skip
-      if (!emailConfig.user || !emailConfig.pass) {
-        console.log("--- NO EMAIL CREDENTIALS CONFIGURED ---");
-        console.log("To:", email);
-        return res.json({ success: true, message: "Email logged (No credentials found in Settings or Env)" });
-      }
-
-      await transporter.sendMail(mailOptions);
+      });
       res.json({ success: true });
-    } catch (error) {
-      console.error("Error sending email:", error);
+    } catch (error: any) {
+      console.error("[API] Error sending email:", error);
       res.status(500).json({ error: "Failed to send email" });
     }
   });
+
+  // Catch-all for API to prevent fallthrough to Vite
+  apiRouter.all("*", (req, res) => {
+    console.log(`[API] 404 - Not Found: ${req.method} ${req.originalUrl}`);
+    res.status(404).json({ error: `Route ${req.method} ${req.originalUrl} not found` });
+  });
+
+  // Use the router
+  app.use("/api", apiRouter);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
