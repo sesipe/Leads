@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { collection, getDocs, query, orderBy, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Lead, LeadStatus, School, Course } from '../../types';
-import { Search, Filter, Download, MoreHorizontal, Mail, MessageCircle, Trash2, CheckCircle } from 'lucide-react';
+import { Search, Filter, Download, MoreHorizontal, Mail, MessageCircle, Trash2, CheckCircle, ChevronDown, ChevronUp, Save, Send } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '../../lib/utils';
@@ -14,6 +14,9 @@ export default function AdminLeads() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<LeadStatus | 'Todos'>('Todos');
+  const [expandedLeadId, setExpandedLeadId] = useState<string | null>(null);
+  const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
+  const [tempNotes, setTempNotes] = useState<{ [key: string]: string }>({});
 
   useEffect(() => {
     fetchData();
@@ -65,6 +68,49 @@ export default function AdminLeads() {
       setLeads(leads.filter(l => l.id !== id));
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleUpdateNotes = async (id: string) => {
+    const notes = tempNotes[id];
+    try {
+      await updateDoc(doc(db, 'leads', id), { notes });
+      setLeads(leads.map(l => l.id === id ? { ...l, notes } : l));
+      alert('Anotações salvas!');
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao salvar notas.');
+    }
+  };
+
+  const handleSendManualEmail = async (lead: Lead) => {
+    if (!confirm(`Enviar e-mail de confirmação manual para ${lead.name}?`)) return;
+    
+    setSendingEmailId(lead.id);
+    try {
+      const response = await fetch('/api/send-confirmation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: lead.email,
+          name: lead.name,
+          schoolName: getSchoolName(lead.schoolId),
+          gradeName: lead.grade,
+          courseName: getCourseName(lead.courseId)
+        })
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        alert('E-mail enviado com sucesso!');
+      } else {
+        alert('Erro ao enviar e-mail.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Falha na comunicação com o servidor de e-mail.');
+    } finally {
+      setSendingEmailId(null);
     }
   };
 
@@ -161,60 +207,111 @@ export default function AdminLeads() {
               ) : filteredLeads.length === 0 ? (
                 <tr><td colSpan={5} className="py-20 text-center text-slate-400 italic">Nenhum lead encontrado.</td></tr>
               ) : filteredLeads.map((lead) => (
-                <tr key={lead.id} className="hover:bg-slate-50/50 transition-colors group">
-                  <td className="px-6 py-4">
-                    <div className="font-bold text-slate-800">{lead.name}</div>
-                    <div className="text-[10px] text-slate-400 font-medium uppercase tracking-tight">{lead.category} • {lead.email}</div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="font-bold text-sesi-blue text-[11px] uppercase tracking-tighter">{getSchoolName(lead.schoolId)}</div>
-                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{getCourseName(lead.courseId)} <span className="text-slate-300 mx-1">•</span> {lead.grade}</div>
-                  </td>
-                  <td className="px-6 py-4 text-[10px] text-slate-400 font-bold italic">
-                    {format(lead.createdAt, 'dd/MM/yyyy HH:mm', { locale: ptBR })}
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={cn(
-                        "px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-tight shadow-sm border",
-                        lead.status === 'Pendente' && "bg-amber-50 text-amber-700 border-amber-100",
-                        lead.status === 'Contatado' && "bg-blue-50 text-blue-700 border-blue-100",
-                        lead.status === 'Matriculado' && "bg-green-50 text-green-700 border-green-100",
-                        lead.status === 'Desistente' && "bg-slate-100 text-slate-600 border-slate-200",
-                    )}>
-                      {lead.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <a 
-                        href={`https://wa.me/55${lead.whatsapp.replace(/\D/g, '')}`} 
-                        target="_blank" 
-                        rel="noreferrer"
-                        className="text-green-600 font-bold hover:scale-110 transition-transform"
-                        title="Canal WhatsApp"
-                      >
-                        <MessageCircle size={18} />
-                      </a>
-                      <select 
-                        onChange={(e) => updateStatus(lead.id, e.target.value as LeadStatus)}
-                        className="text-[9px] border-none bg-transparent focus:ring-0 text-slate-400 hover:text-sesi-blue font-bold uppercase tracking-tighter cursor-pointer"
-                        title="Alterar Status Operacional"
-                        value={lead.status}
-                      >
-                        <option value="Pendente">Aguardando</option>
-                        <option value="Contatado">Contatado</option>
-                        <option value="Matriculado">Efetivado</option>
-                        <option value="Desistente">Desistência</option>
-                      </select>
-                      <button 
-                        onClick={() => deleteLead(lead.id)}
-                        className="text-slate-300 hover:text-red-500 transition-colors"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+                <React.Fragment key={lead.id}>
+                  <tr className="hover:bg-slate-50/50 transition-colors group">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => {
+                            setExpandedLeadId(expandedLeadId === lead.id ? null : lead.id);
+                            if (!tempNotes[lead.id]) setTempNotes(p => ({ ...p, [lead.id]: lead.notes || '' }));
+                          }}
+                          className="text-slate-300 hover:text-sesi-blue"
+                        >
+                          {expandedLeadId === lead.id ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </button>
+                        <div>
+                          <div className="font-bold text-slate-800">{lead.name}</div>
+                          <div className="text-[10px] text-slate-400 font-medium uppercase tracking-tight">{lead.category} • {lead.email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="font-bold text-sesi-blue text-[11px] uppercase tracking-tighter">{getSchoolName(lead.schoolId)}</div>
+                      <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{getCourseName(lead.courseId)} <span className="text-slate-300 mx-1">•</span> {lead.grade}</div>
+                    </td>
+                    <td className="px-6 py-4 text-[10px] text-slate-400 font-bold italic">
+                      {format(lead.createdAt, 'dd/MM/yyyy HH:mm', { locale: ptBR })}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={cn(
+                          "px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-tight shadow-sm border",
+                          lead.status === 'Pendente' && "bg-amber-50 text-amber-700 border-amber-100",
+                          lead.status === 'Contatado' && "bg-blue-50 text-blue-700 border-blue-100",
+                          lead.status === 'Matriculado' && "bg-green-50 text-green-700 border-green-100",
+                          lead.status === 'Desistente' && "bg-slate-100 text-slate-600 border-slate-200",
+                      )}>
+                        {lead.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <a 
+                          href={`https://wa.me/55${lead.whatsapp.replace(/\D/g, '')}`} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="text-green-600 font-bold hover:scale-110 transition-transform"
+                          title="Falar no WhatsApp"
+                        >
+                          <MessageCircle size={18} />
+                        </a>
+                        <button 
+                          disabled={sendingEmailId === lead.id}
+                          onClick={() => handleSendManualEmail(lead)}
+                          className={cn(
+                            "text-sesi-blue font-bold hover:scale-110 transition-transform disabled:opacity-50",
+                            sendingEmailId === lead.id && "animate-pulse"
+                          )}
+                          title="Enviar E-mail de Confirmação"
+                        >
+                          <Mail size={18} />
+                        </button>
+                        <select 
+                          onChange={(e) => updateStatus(lead.id, e.target.value as LeadStatus)}
+                          className="text-[9px] border-none bg-transparent focus:ring-0 text-slate-400 hover:text-sesi-blue font-bold uppercase tracking-tighter cursor-pointer"
+                          title="Alterar Status Operacional"
+                          value={lead.status}
+                        >
+                          <option value="Pendente">Aguardando</option>
+                          <option value="Contatado">Contatado</option>
+                          <option value="Matriculado">Efetivado</option>
+                          <option value="Desistente">Desistência</option>
+                        </select>
+                        <button 
+                          onClick={() => deleteLead(lead.id)}
+                          className="text-slate-300 hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {expandedLeadId === lead.id && (
+                    <tr className="bg-slate-50/80">
+                      <td colSpan={5} className="px-10 py-6 border-b border-slate-100">
+                        <div className="flex flex-col gap-3">
+                           <div className="flex items-center justify-between">
+                              <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
+                                 <MoreHorizontal size={14} /> Histórico e Observações do Atendimento
+                              </h4>
+                              <button 
+                                onClick={() => handleUpdateNotes(lead.id)}
+                                className="flex items-center gap-2 px-4 py-1.5 bg-slate-900 text-white rounded-lg text-[9px] font-bold uppercase tracking-widest hover:bg-black transition-all"
+                              >
+                                 <Save size={12} /> Salvar Notas
+                              </button>
+                           </div>
+                           <textarea 
+                             value={tempNotes[lead.id] || ''}
+                             onChange={e => setTempNotes({ ...tempNotes, [lead.id]: e.target.value })}
+                             placeholder="Ex: Entramos em contato via WhatsApp mas o responsável afirmou que ainda está decidindo..."
+                             className="w-full p-4 rounded-xl border border-slate-200 bg-white text-xs font-medium text-slate-600 outline-none focus:border-sesi-blue transition-all min-h-[100px]"
+                           />
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               ))}
             </tbody>
           </table>

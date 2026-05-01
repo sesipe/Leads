@@ -20,6 +20,7 @@ export default function AdminSettings() {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [activeTab, setActiveTab] = useState<'templates' | 'email'>('templates');
 
   useEffect(() => {
@@ -67,6 +68,35 @@ export default function AdminSettings() {
         port: 587,
       }
     }));
+  };
+
+  const handleTestEmail = async () => {
+    const testEmail = prompt('Digite um e-mail para receber o teste:');
+    if (!testEmail || !settings.emailConfig) return;
+
+    setTesting(true);
+    try {
+      const response = await fetch('/api/test-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          config: settings.emailConfig,
+          testEmail
+        })
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        alert('E-mail de teste enviado com sucesso! Verifique sua caixa de entrada.');
+      } else {
+        alert('Erro: ' + result.error);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Falha ao conectar com o servidor de e-mail.');
+    } finally {
+      setTesting(false);
+    }
   };
 
   if (loading) return (
@@ -229,6 +259,26 @@ export default function AdminSettings() {
                      className="w-full px-6 py-4 rounded-2xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-sesi-blue outline-none transition-all font-bold text-sm"
                      placeholder="noreply@sesipe.org.br"
                    />
+                </div>
+
+                <div className="md:col-span-2 flex flex-col sm:flex-row gap-4 pt-4 border-t border-slate-50">
+                   <button 
+                     type="button"
+                     disabled={testing}
+                     onClick={handleTestEmail}
+                     className="flex-1 px-6 py-4 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all disabled:opacity-50 flex items-center justify-center gap-3"
+                   >
+                      {testing ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          Testando...
+                        </>
+                      ) : (
+                        <>
+                          <Zap size={16} /> Enviar E-mail de Teste
+                        </>
+                      )}
+                   </button>
                 </div>
 
                 <div className="md:col-span-2 flex items-start gap-4 p-6 bg-amber-50 rounded-3xl border border-amber-100">

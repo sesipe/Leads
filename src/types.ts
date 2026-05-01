@@ -30,6 +30,7 @@ export interface Lead {
   grade: string;
   createdAt: any; // Firestore Timestamp
   status: LeadStatus;
+  notes?: string;
 }
 
 export interface AppSettings {

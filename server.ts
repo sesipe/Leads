@@ -41,6 +41,46 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  // API Route: Test Email Configuration
+  app.post("/api/test-email", async (req, res) => {
+    const { config, testEmail } = req.body;
+
+    if (!config || !testEmail) {
+      return res.status(400).json({ error: "Configuration and test email are required" });
+    }
+
+    try {
+      const transporter = nodemailer.createTransport({
+        host: config.host,
+        port: Number(config.port),
+        secure: Number(config.port) === 465,
+        auth: {
+          user: config.user,
+          pass: config.pass,
+        },
+      });
+
+      // Verify connection configuration
+      await transporter.verify();
+
+      // Send actual test email
+      await transporter.sendMail({
+        from: `"${config.fromName}" <${config.fromEmail}>`,
+        to: testEmail,
+        subject: "Teste de Conexão - SESI Pernambuco",
+        text: "Sua configuração de e-mail foi validada com sucesso!",
+        html: "<b>Sua configuração de e-mail foi validada com sucesso!</b>",
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("SMTP Test Error:", error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Falha na conexão SMTP" 
+      });
+    }
+  });
+
   // API Route: Send Confirmation Email
   app.post("/api/send-confirmation", async (req, res) => {
     const { email, name, schoolName, gradeName, courseName } = req.body;
