@@ -39,32 +39,41 @@ export default function AdminUsers() {
   }
 
   const handleAddUser = async () => {
-    if (!newUser.email || !newUser.name || (newUser.role === 'operator' && !newUser.schoolId)) {
-      alert('Preencha todos os campos obrigatórios.');
+    if (!newUser.email || !newUser.name || !newUser.password || (newUser.role === 'operator' && !newUser.schoolId)) {
+      alert('Preencha todos os campos obrigatórios, incluindo a senha.');
       return;
     }
 
+    setLoading(true);
     try {
-      // Usamos o email como ID temporário se não tivermos UID ainda, 
-      // mas o ideal é que o usuário já tenha logado.
-      // Para facilitar, vamos salvar com um ID baseado no email sanitizado
-      const id = newUser.uid || newUser.email.replace(/[^a-zA-Z0-9]/g, '_');
-      
-      const userToSave: UserProfile = {
-        uid: id,
-        email: newUser.email,
-        role: newUser.role as UserRole,
-        name: newUser.name,
-        schoolId: newUser.schoolId
-      };
+      const response = await fetch('/api/admin/create-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUser)
+      });
 
-      await setDoc(doc(db, 'users', id), userToSave);
-      setUsers([...users, userToSave]);
-      setIsAdding(false);
-      setNewUser({ role: 'operator' });
+      const result = await response.json();
+      
+      if (result.success) {
+        const userToSave: UserProfile = {
+          uid: result.uid,
+          email: newUser.email!,
+          role: newUser.role as UserRole,
+          name: newUser.name!,
+          schoolId: newUser.schoolId
+        };
+        setUsers([...users, userToSave]);
+        setIsAdding(false);
+        setNewUser({ role: 'operator' });
+        alert('Usuário cadastrado com sucesso!');
+      } else {
+        alert('Erro: ' + (result.error || 'Erro desconhecido ao criar usuário.'));
+      }
     } catch (err) {
       console.error(err);
-      alert('Erro ao salvar usuário.');
+      alert('Erro ao conectar com o servidor para criar usuário.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -121,6 +130,16 @@ export default function AdminUsers() {
                   onChange={e => setNewUser({...newUser, email: e.target.value})}
                   className="w-full px-6 py-3 rounded-2xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-sesi-blue outline-none transition-all font-bold text-xs"
                   placeholder="joao.silva@sesipe.org.br"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Senha de Acesso</label>
+                <input 
+                  type="password"
+                  value={newUser.password || ''}
+                  onChange={e => setNewUser({...newUser, password: e.target.value})}
+                  className="w-full px-6 py-3 rounded-2xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-sesi-blue outline-none transition-all font-bold text-xs"
+                  placeholder="Defina uma senha"
                 />
               </div>
               <div className="space-y-2">

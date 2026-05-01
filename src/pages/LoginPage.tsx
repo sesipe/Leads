@@ -2,44 +2,54 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../components/providers/AuthProvider';
 import { motion } from 'motion/react';
+import { Mail, Lock, Eye, EyeOff, ShieldUser } from 'lucide-react';
 
 export default function LoginPage() {
-  const { loginWithGoogle, user, isAdmin, loading: authLoading } = useAuth();
+  const { loginWithGoogle, loginWithEmail, user, isAdmin, isOperator, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
     if (!authLoading && user) {
-      if (isAdmin) {
+      if (isAdmin || isOperator) {
         navigate('/admin/dashboard');
       } else {
-        setError("Acesso negado. Seu e-mail não possui permissões de administrador.");
+        setError("Acesso negado. Seu e-mail não possui permissões administrativas.");
       }
     }
-  }, [user, isAdmin, authLoading, navigate]);
+  }, [user, isAdmin, isOperator, authLoading, navigate]);
 
-  const handleLogin = async () => {
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      console.log("Iniciando login com Google...");
-      await loginWithGoogle();
-      console.log("Login disparado com sucesso.");
+      await loginWithEmail(email, password);
     } catch (err: any) {
       console.error("Erro no login:", err);
-      let message = "Falha na autenticação. Verifique seu navegador ou conexão.";
-      
+      let message = "Credenciais inválidas ou erro de conexão.";
+      if (err.code === 'auth/invalid-credential') message = "E-mail ou senha incorretos.";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await loginWithGoogle();
+    } catch (err: any) {
+      console.error("Erro no login:", err);
+      let message = "Falha na autenticação via Google.";
       if (err.code === 'auth/popup-blocked') {
-        message = "O seu navegador bloqueou a janela de login. Por favor, clique no ícone de 'Abrir em nova aba' no canto superior direito para fazer o login com segurança fora do iframe.";
-      } else if (err.code === 'auth/popup-closed-by-user') {
-        message = "A janela de login foi fechada. Para evitar restrições de segurança do navegador, abra o aplicativo em uma nova aba usando o ícone no topo direito deste editor.";
-      } else if (err.code === 'auth/network-request-failed') {
-        message = "Falha de conexão. Verifique sua internet.";
-      } else if (err.message) {
-        message = `Erro: ${err.message}`;
+        message = "O seu navegador bloqueou a janela de login. Por favor, abra o aplicativo em uma nova aba.";
       }
-      
       setError(message);
     } finally {
       setLoading(false);
@@ -47,35 +57,101 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]">
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="max-w-md w-full bg-white rounded-xl shadow-xl p-10 border border-slate-200 text-center"
+        className="w-full max-w-md bg-white rounded-[40px] shadow-2xl overflow-hidden border border-slate-100"
       >
-        <div className="w-16 h-16 bg-sesi-blue rounded-md flex items-center justify-center text-white font-bold text-3xl mx-auto mb-8 shadow-md">S</div>
-        <h1 className="text-xl font-bold text-slate-800 mb-1 uppercase tracking-tight">Painel SESI PE</h1>
-        <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-10">
-          Portal de Captação de Leads
-        </p>
-
-        {error && (
-          <div className="mb-6 p-3 bg-red-50 border border-red-100 text-red-600 text-[10px] font-bold uppercase rounded italic">
-            {error}
+        <div className="bg-sesi-blue p-12 text-white text-center relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+             <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white via-transparent to-transparent"></div>
           </div>
-        )}
+          <motion.div
+            initial={{ scale: 0.8, rotate: -10 }}
+            animate={{ scale: 1, rotate: 0 }}
+            className="w-16 h-16 bg-white/20 rounded-3xl backdrop-blur-xl flex items-center justify-center mx-auto mb-6 shadow-lg"
+          >
+            <ShieldUser size={32} className="text-white" />
+          </motion.div>
+          <h1 className="text-3xl font-black uppercase tracking-tighter italic leading-none mb-2">Painel Administrativo</h1>
+          <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-70">Rede SESI Pernambuco</p>
+        </div>
 
-        <button
-          onClick={handleLogin}
-          disabled={loading}
-          className="w-full flex items-center justify-center gap-3 bg-white border border-slate-200 py-3.5 rounded font-bold text-slate-700 hover:bg-slate-50 transition-all disabled:opacity-50 text-xs uppercase tracking-widest shadow-sm"
-        >
-          <img src="https://www.google.com/favicon.ico" className="w-4 h-4 opacity-70" alt="Google" />
-          {loading ? 'AUTENTICANDO...' : 'ENTRAR COM GOOGLE'}
-        </button>
+        <div className="p-10">
+          <form onSubmit={handleEmailLogin} className="space-y-6">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">E-mail Institucional</label>
+              <div className="relative">
+                <Mail className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+                <input 
+                  type="email"
+                  required
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  className="w-full pl-14 pr-6 py-4 rounded-2xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-sesi-blue outline-none transition-all font-bold text-sm"
+                  placeholder="seu@e-mail.com.br"
+                />
+              </div>
+            </div>
 
-        <div className="mt-10 p-4 bg-slate-50 rounded border border-slate-200 text-slate-500 text-[10px] text-left leading-relaxed">
-            <strong>ACESSO RESTRITO:</strong> Apenas administradores cadastrados na rede SESI Pernambuco possuem permissão para acessar este painel. Caso necessite de acesso, entre em contato com a TI.
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Senha de Acesso</label>
+              <div className="relative">
+                <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+                <input 
+                  type={showPassword ? "text" : "password"}
+                  required
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  className="w-full pl-14 pr-14 py-4 rounded-2xl border border-slate-100 bg-slate-50 focus:bg-white focus:border-sesi-blue outline-none transition-all font-bold text-sm"
+                  placeholder="••••••••"
+                />
+                <button 
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-sesi-blue transition-colors"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+            </div>
+
+            {error && (
+              <div className="p-4 bg-red-50 text-red-600 rounded-xl text-[10px] font-bold uppercase tracking-widest border border-red-100 text-center italic">
+                {error}
+              </div>
+            )}
+
+            <button 
+              type="submit"
+              disabled={loading}
+              className="w-full bg-sesi-red text-white py-5 rounded-[24px] font-black text-xs uppercase tracking-[0.2em] shadow-xl shadow-sesi-red/20 hover:brightness-105 active:scale-[0.98] transition-all disabled:opacity-50"
+            >
+              {loading ? 'AUTENTICANDO...' : 'ENTRAR NO SISTEMA'}
+            </button>
+
+            <div className="pt-4 flex flex-col items-center gap-4">
+               <div className="w-full flex items-center gap-4">
+                  <div className="h-[1px] bg-slate-100 flex-1"></div>
+                  <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">Ou acesse com</span>
+                  <div className="h-[1px] bg-slate-100 flex-1"></div>
+               </div>
+
+               <button 
+                type="button"
+                onClick={handleGoogleLogin}
+                className="flex items-center justify-center gap-3 w-full py-4 rounded-2xl border border-slate-200 hover:bg-slate-50 transition-all font-bold text-slate-600 text-xs"
+              >
+                <img src="https://www.svgrepo.com/show/355037/google.svg" className="w-5 h-5" alt="Google" />
+                Conta Corporativa Google
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div className="bg-slate-50 p-6 text-center border-t border-slate-100">
+           <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">SESI Pernambuco • Acesso Restrito</p>
         </div>
       </motion.div>
     </div>

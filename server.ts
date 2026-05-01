@@ -36,6 +36,38 @@ async function startServer() {
 
   console.log(`Starting server in ${process.env.NODE_ENV || 'development'} mode...`);
 
+  // API Route: Admin Create User
+  app.post("/api/admin/create-user", async (req, res) => {
+    const { email, password, name, role, schoolId } = req.body;
+
+    if (!db) return res.status(500).json({ error: "Firebase Admin not initialized" });
+    
+    try {
+      // 1. Create user in Firebase Auth
+      const userRecord = await admin.auth().createUser({
+        email,
+        password,
+        displayName: name,
+      });
+
+      // 2. Create profile in Firestore
+      await db.collection('users').doc(userRecord.uid).set({
+        uid: userRecord.uid,
+        email,
+        name,
+        role,
+        schoolId: role === 'operator' ? schoolId : null,
+      });
+
+      res.json({ success: true, uid: userRecord.uid });
+    } catch (error) {
+      console.error("Error creating user:", error);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : "Erro ao criar usuário no Auth" 
+      });
+    }
+  });
+
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
