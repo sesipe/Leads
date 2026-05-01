@@ -43,12 +43,16 @@ async function startServer() {
     if (!db) return res.status(500).json({ error: "Firebase Admin not initialized" });
     
     try {
+      console.log(`Tentando criar usuário: ${email} (${role})`);
+      
       // 1. Create user in Firebase Auth
       const userRecord = await admin.auth().createUser({
         email,
         password,
         displayName: name,
       });
+
+      console.log(`Usuário criado no Auth com UID: ${userRecord.uid}`);
 
       // 2. Create profile in Firestore
       await db.collection('users').doc(userRecord.uid).set({
@@ -57,13 +61,22 @@ async function startServer() {
         name,
         role,
         schoolId: role === 'operator' ? schoolId : null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
+      console.log(`Perfil criado no Firestore para UID: ${userRecord.uid}`);
       res.json({ success: true, uid: userRecord.uid });
-    } catch (error) {
-      console.error("Error creating user:", error);
+    } catch (error: any) {
+      console.error("ERRO CRÍTICO na criação de usuário:", error);
+      
+      let clientMessage = "Erro ao processar criação de usuário.";
+      if (error.code === 'auth/email-already-exists') clientMessage = "Este e-mail já está cadastrado.";
+      if (error.code === 'auth/invalid-password') clientMessage = "A senha deve ter pelo menos 6 caracteres.";
+      
       res.status(500).json({ 
-        error: error instanceof Error ? error.message : "Erro ao criar usuário no Auth" 
+        success: false,
+        error: clientMessage,
+        details: error.message 
       });
     }
   });

@@ -52,9 +52,17 @@ export default function AdminUsers() {
         body: JSON.stringify(newUser)
       });
 
-      const result = await response.json();
+      let result;
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        result = await response.json();
+      } else {
+        const text = await response.text();
+        console.error("Servidor retornou resposta não-JSON:", text);
+        throw new Error("O servidor retornou uma resposta inválida (formato inesperado).");
+      }
       
-      if (result.success) {
+      if (response.ok && result.success) {
         const userToSave: UserProfile = {
           uid: result.uid,
           email: newUser.email!,
@@ -67,11 +75,13 @@ export default function AdminUsers() {
         setNewUser({ role: 'operator' });
         alert('Usuário cadastrado com sucesso!');
       } else {
-        alert('Erro: ' + (result.error || 'Erro desconhecido ao criar usuário.'));
+        const errorMsg = result.error || 'Erro desconhecido ao criar usuário.';
+        console.error("Erro do servidor:", errorMsg);
+        alert('Erro: ' + errorMsg);
       }
-    } catch (err) {
-      console.error(err);
-      alert('Erro ao conectar com o servidor para criar usuário.');
+    } catch (err: any) {
+      console.error("Erro na requisição:", err);
+      alert('Falha na comunicação: ' + (err.message || 'Verifique sua conexão ou se o servidor está ativo.'));
     } finally {
       setLoading(false);
     }
