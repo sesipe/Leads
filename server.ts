@@ -34,6 +34,12 @@ async function startServer() {
   // Middleware for parsing JSON
   app.use(express.json());
 
+  // Logging Middleware (Move to top)
+  app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    next();
+  });
+
   console.log(`Starting server in ${process.env.NODE_ENV || 'development'} mode...`);
 
   // API Route: Admin Create User
@@ -231,12 +237,6 @@ async function startServer() {
     }
   });
 
-  // Logging
-  app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
-    next();
-  });
-
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     console.log("Setting up Vite middleware...");
@@ -275,6 +275,16 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server started and listening on http://0.0.0.0:${PORT}`);
+  });
+
+  // Global Error Handler
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("GLOBAL ERROR:", err);
+    res.status(500).json({ 
+      success: false, 
+      error: "Erro interno no servidor",
+      details: err.message || String(err)
+    });
   });
 }
 
