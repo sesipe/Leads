@@ -14,26 +14,36 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Initialize Firebase Admin
-let db: admin.firestore.Firestore | null = null;
+let db: any = null;
+let initError: string | null = null;
+
 try {
   const firebaseConfigPath = path.resolve(process.cwd(), "firebase-applet-config.json");
   if (fs.existsSync(firebaseConfigPath)) {
     const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
-    console.log("Initializing Firebase Admin (Auto)");
+    console.log("Initializing Firebase Admin with Project ID:", firebaseConfig.projectId);
     
-    admin.initializeApp();
+    // Check if already initialized
+    if (admin.apps.length === 0) {
+      admin.initializeApp({
+        projectId: firebaseConfig.projectId,
+      });
+    }
     
+    // Get Firestore instance with database ID
     if (firebaseConfig.firestoreDatabaseId) {
-      console.log("Using Database ID directly in getFirestore:", firebaseConfig.firestoreDatabaseId);
+      console.log("Using Database ID:", firebaseConfig.firestoreDatabaseId);
       db = getFirestore(firebaseConfig.firestoreDatabaseId);
     } else {
       db = getFirestore();
     }
     console.log("Firebase Admin initialized successfully");
   } else {
-    console.error("Firebase config file NOT FOUND at:", firebaseConfigPath);
+    initError = "Config file not found";
+    console.error(initError);
   }
-} catch (err) {
+} catch (err: any) {
+  initError = err.message || String(err);
   console.error("Firebase Admin initialization failed:", err);
 }
 
@@ -54,6 +64,16 @@ async function startServer() {
   console.log(`Starting server in ${process.env.NODE_ENV || 'development'} mode...`);
 
   const apiRouter = express.Router();
+
+  // API Route: Debug Firebase Init
+  apiRouter.get("/admin/init-status", (req, res) => {
+    res.json({ 
+      initialized: !!db, 
+      error: initError,
+      appsCount: admin.apps.length,
+      projectId: admin.apps.length > 0 ? admin.app().options.projectId : null
+    });
+  });
 
   // API Route: Admin Create User
   apiRouter.post("/admin/create-user", async (req, res) => {
@@ -99,6 +119,82 @@ async function startServer() {
         details: error.message 
       });
     }
+  });
+
+  // API Route: Seed Schools and Operators
+  apiRouter.post("/admin/seed-schools", async (req, res) => {
+    if (!db) return res.status(500).json({ error: "Firebase Admin not initialized" });
+
+    const schoolsData = [
+      { name: 'SESI Vasco da Gama', codFilial: 504, user: 'vascodagama' },
+      { name: 'SESI Ibura', codFilial: 505, user: 'ibura' },
+      { name: 'SESI Camaragibe', codFilial: 506, user: 'camaragibe' },
+      { name: 'SESI Paulista', codFilial: 507, user: 'paulista' },
+      { name: 'SESI Cabo de Santo Agostinho', codFilial: 510, user: 'cabo' },
+      { name: 'SESI Escada', codFilial: 511, user: 'escada' },
+      { name: 'SESI Goiana', codFilial: 513, user: 'goiana' },
+      { name: 'SESI Caruaru', codFilial: 515, user: 'caruaru' },
+      { name: 'SESI Petrolina', codFilial: 517, user: 'petrolina' },
+      { name: 'SESI Araripina', codFilial: 518, user: 'araripina' },
+      { name: 'SESI Moreno', codFilial: 524, user: 'moreno' },
+      { name: 'SESI Belo Jardim', codFilial: 501, user: 'belojardim' },
+    ];
+
+    const results = [];
+
+    for (const sh of schoolsData) {
+      try {
+        const schoolId = sh.user;
+        const userEmail = `${sh.user}@sistemafiepe.org.br`;
+        const userPass = `${sh.user}@1234`;
+        const schoolName = sh.name.replace(/SESI\s+/, '');
+
+        // 1. Create/Update School Record
+        await db.collection('schools').doc(schoolId).set({
+          id: schoolId,
+          name: sh.name,
+          codFilial: sh.codFilial,
+          active: true,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        // 2. Create Auth User
+        let uid = '';
+        try {
+          const userRecord = await admin.auth().createUser({
+            email: userEmail,
+            password: userPass,
+            displayName: schoolName,
+          });
+          uid = userRecord.uid;
+          results.push({ school: sh.name, status: 'created', email: userEmail });
+        } catch (authErr: any) {
+          if (authErr.code === 'auth/email-already-exists') {
+            const existingUser = await admin.auth().getUserByEmail(userEmail);
+            uid = existingUser.uid;
+            results.push({ school: sh.name, status: 'already_existed', email: userEmail });
+          } else {
+            throw authErr;
+          }
+        }
+
+        // 3. Create/Update User Profile
+        await db.collection('users').doc(uid).set({
+          uid,
+          email: userEmail,
+          name: schoolName,
+          role: 'operator',
+          schoolId: schoolId,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+
+      } catch (err: any) {
+        console.error(`Error processing ${sh.name}:`, err.message);
+        results.push({ school: sh.name, status: 'error', error: err.message });
+      }
+    }
+
+    res.json({ success: true, results });
   });
 
   // Health check

@@ -16,6 +16,9 @@ export default function AdminUsers() {
     role: 'operator'
   });
 
+  const [isSeeding, setIsSeeding] = useState(false);
+  const [seedStep, setSeedStep] = useState('');
+
   useEffect(() => {
     if (isAdmin) {
       fetchData();
@@ -37,6 +40,58 @@ export default function AdminUsers() {
       setLoading(false);
     }
   }
+
+  const handleSeedAll = async () => {
+    if (!confirm('Deseja auto-gerar as contas administrativas para todas as 12 unidades escolares do SESI-PE?')) return;
+    
+    setIsSeeding(true);
+    setLoading(true);
+
+    const schoolsToSeed = [
+      { name: 'Vasco da Gama', user: 'vascodagama' },
+      { name: 'Ibura', user: 'ibura' },
+      { name: 'Camaragibe', user: 'camaragibe' },
+      { name: 'Paulista', user: 'paulista' },
+      { name: 'Cabo de Santo Agostinho', user: 'cabo' },
+      { name: 'Escada', user: 'escada' },
+      { name: 'Goiana', user: 'goiana' },
+      { name: 'Caruaru', user: 'caruaru' },
+      { name: 'Petrolina', user: 'petrolina' },
+      { name: 'Araripina', user: 'araripina' },
+      { name: 'Moreno', user: 'moreno' },
+      { name: 'Belo Jardim', user: 'belojardim' },
+    ];
+
+    try {
+       // 1. First trigger the server-side seed route to handle everything reliably
+       const response = await fetch('/api/admin/seed-schools', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' }
+       });
+
+       const result = await response.json();
+       
+       if (response.ok && result.success) {
+         setSeedStep('Concluído com sucesso!');
+         alert('Contas escolares geradas com sucesso!');
+         fetchData(); // Refresh list
+       } else {
+         const errorMsg = result.error || 'Erro ao processar lote.';
+         // Check if it's the Identity Toolkit error
+         if (errorMsg.includes('identitytoolkit.googleapis.com')) {
+            alert('ERRO CRÍTICO: A API de Autenticação (Identity Toolkit) precisa ser ativada no seu console Firebase para criar usuários via servidor. Por favor, contate o administrador.');
+         } else {
+            alert('Erro: ' + errorMsg);
+         }
+       }
+    } catch (err: any) {
+      console.error(err);
+      alert('Falha na comunicação com o servidor: ' + err.message);
+    } finally {
+      setIsSeeding(false);
+      setLoading(false);
+    }
+  };
 
   const handleAddUser = async () => {
     if (!newUser.email || !newUser.name || !newUser.password || (newUser.role === 'operator' && !newUser.schoolId)) {
@@ -122,12 +177,21 @@ export default function AdminUsers() {
           <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Controle de acessos por unidade escolar</p>
         </div>
 
-        <button 
-          onClick={() => setIsAdding(true)}
-          className="flex items-center gap-2 bg-sesi-blue text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:brightness-110 transition-all shadow-lg shadow-sesi-blue/20"
-        >
-          <UserPlus size={16} /> Novo Operador
-        </button>
+        <div className="flex gap-4">
+          <button 
+            onClick={handleSeedAll}
+            disabled={loading || isSeeding}
+            className="flex items-center gap-2 bg-slate-100 text-slate-600 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all border border-slate-200"
+          >
+            {isSeeding ? 'Processando...' : 'Auto-Gerar Contas Escolares'}
+          </button>
+          <button 
+            onClick={() => setIsAdding(true)}
+            className="flex items-center gap-2 bg-sesi-blue text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:brightness-110 transition-all shadow-lg shadow-sesi-blue/20"
+          >
+            <UserPlus size={16} /> Novo Operador
+          </button>
+        </div>
       </div>
 
       {isAdding && (
