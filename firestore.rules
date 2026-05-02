@@ -80,7 +80,10 @@ service cloud.firestore {
 
     // Schools
     match /schools/{schoolId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create: if isAdmin() && isValidSchool(incoming());
+      allow update: if isAdmin() && isValidSchool(incoming());
+      allow delete: if isAdmin();
     }
 
     // Courses
@@ -102,7 +105,8 @@ service cloud.firestore {
 
     // Users
     match /users/{userId} {
-      allow read, write: if true;
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
     }
 
     // Admins
