@@ -42,19 +42,57 @@ export default function LoginPage() {
 
 
   const handleInitialSetup = async () => {
+    if (loading) return;
     setLoading(true);
     setError(null);
+    
+    // Timeout de 30 segundos para evitar que a tela fique travada para sempre
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
     try {
-      const response = await fetch('/api/admin/setup-master', { method: 'POST' });
-      const data = await response.json();
-      if (data.success) {
-        alert('Administrador mestre configurado com sucesso! Agora você pode fazer login.');
+      console.log("[Setup] Enviando requisição para /api/admin/setup-master...");
+      const response = await fetch('/api/admin/setup-master', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      let data: any;
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        data = await response.json();
       } else {
-        throw new Error(data.error || 'Erro desconhecido');
+        const text = await response.text();
+        console.error("[Setup] Resposta não-JSON recebida:", text);
+        throw new Error("O servidor retornou uma resposta inválida (não-JSON). Verifique os logs do servidor.");
+      }
+      
+      if (response.ok && data.success) {
+        console.log("[Setup] Sucesso!");
+        alert('Administrador mestre configurado com sucesso!\n\nEmail: tablet.diretoriaeducacao@gmail.com\nSenha: Abc@1234\n\nAgora você pode fazer login.');
+        setEmail('tablet.diretoriaeducacao@gmail.com');
+      } else {
+        const errorMsg = data.error || 'Erro desconhecido no servidor';
+        console.error("[Setup] Erro:", errorMsg);
+        
+        if (errorMsg.includes('API_DISABLED') || errorMsg.includes('identitytoolkit.googleapis.com')) {
+          setError('ERRO DE API: A API Identity Toolkit precisa ser ativada no projeto ' + (data.projectId || 'gen-lang-client-0506883400'));
+          alert('ATENÇÃO: O erro indica que a API Identity Toolkit NÃO está ativa no projeto ' + (data.projectId || 'gen-lang-client-0506883400') + '.\n\nPor favor, aguarde 2 minutos para a ativação propagar. Se continuar falhando, verifique se você ativou no projeto com este ID exato.');
+        } else {
+          setError(errorMsg);
+        }
       }
     } catch (err: any) {
-      console.error(err);
-      setError('Falha ao configurar admin: ' + err.message);
+      clearTimeout(timeoutId);
+      console.error("[Setup] Falha crítica:", err);
+      if (err.name === 'AbortError') {
+        setError('A requisição demorou demais e foi cancelada. Tente novamente.');
+      } else {
+        setError('Falha de conexão: ' + err.message);
+      }
     } finally {
       setLoading(false);
     }

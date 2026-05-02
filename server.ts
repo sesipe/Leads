@@ -257,53 +257,70 @@ async function startServer() {
 
   // API Route: Setup Master Admin
   apiRouter.post("/admin/setup-master", async (req, res) => {
-    if (!db) return res.status(500).json({ error: "Firebase Admin not initialized" });
+    console.log("[ADMIN-SETUP] Request started...");
     
+    if (!db) {
+      console.error("[ADMIN-SETUP] Error: DB not init");
+      return res.status(500).json({ error: "Firebase Admin not initialized" });
+    }
+    
+    const email = 'tablet.diretoriaeducacao@gmail.com';
+    const pass = 'Abc@1234';
+    const name = 'Admin SESI PE';
+
     try {
-      const email = 'tablet.diretoriaeducacao@gmail.com';
-      const pass = 'Abc@1234';
-      const name = 'Admin SESI PE';
-      
-      console.log(`[SETUP] Creating master admin: ${email}`);
+      console.log(`[ADMIN-SETUP] Checking if project API is responsive...`);
       
       let uid = '';
       try {
-        const userRecord = await admin.auth().createUser({
-          email,
-          password: pass,
-          displayName: name,
-        });
-        uid = userRecord.uid;
-        console.log(`[SETUP] User created: ${uid}`);
+        console.log(`[ADMIN-SETUP] Searching for existing user: ${email}`);
+        const existingUser = await admin.auth().getUserByEmail(email);
+        uid = existingUser.uid;
+        console.log(`[ADMIN-SETUP] User already exists: ${uid}`);
+        
+        // Update password just in case
+        await admin.auth().updateUser(uid, { password: pass });
+        console.log(`[ADMIN-SETUP] Password updated for ${uid}`);
       } catch (authErr: any) {
-        if (authErr.code === 'auth/email-already-exists') {
-          const existingUser = await admin.auth().getUserByEmail(email);
-          uid = existingUser.uid;
-          console.log(`[SETUP] User already exists: ${uid}`);
-          
-          // Update password if it already exists to ensure it's the right one
-          await admin.auth().updateUser(uid, { password: pass });
+        if (authErr.code === 'auth/user-not-found') {
+          console.log(`[ADMIN-SETUP] User not found, creating new: ${email}`);
+          const userRecord = await admin.auth().createUser({
+            email,
+            password: pass,
+            displayName: name,
+          });
+          uid = userRecord.uid;
+          console.log(`[ADMIN-SETUP] Successfully created: ${uid}`);
         } else {
+          console.error("[ADMIN-SETUP] Auth Error:", authErr.code, authErr.message);
           throw authErr;
         }
       }
 
-      // Ensure profile exists in Firestore
+      console.log(`[ADMIN-SETUP] Syncing Firestore profile for ${uid}...`);
       await db.collection('users').doc(uid).set({
         uid,
         email,
         name,
         role: 'admin',
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
 
-      res.json({ success: true, message: "Master admin setup complete", email, uid });
+      console.log("[ADMIN-SETUP] Success! Sending response.");
+      return res.json({ success: true, message: "Master admin setup complete", email, uid });
     } catch (err: any) {
-      console.error("[SETUP] Error setting up master admin:", err);
-      res.status(500).json({ 
+      console.error("[ADMIN-SETUP] Global Error:", err);
+      let errorMsg = err.message || String(err);
+      
+      if (errorMsg.includes('identitytoolkit.googleapis.com')) {
+        errorMsg = 'API_DISABLED: A API Identity Toolkit precisa ser ativada no console do Google Cloud.';
+      }
+
+      return res.status(500).json({ 
         success: false, 
-        error: err.message,
-        details: err.code === 'auth/identity-toolkit-node-error' ? "Identity Toolkit API needs to be enabled" : null
+        error: errorMsg,
+        code: err.code,
+        projectId: admin.app().options.projectId
       });
     }
   });
