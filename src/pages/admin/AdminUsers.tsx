@@ -63,6 +63,14 @@ export default function AdminUsers() {
     ];
 
     try {
+       // Check if on Vercel or other external host
+       if (window.location.hostname.includes('vercel.app')) {
+         alert('AVISO: Você está acessando o site pelo Vercel. Operações administrativas (criar usuários) só funcionam no link de DESENVOLVIMENTO do AI Studio (URL terminada em .run.app).');
+         setIsSeeding(false);
+         setLoading(false);
+         return;
+       }
+
        // Loop through schools and create them + their users
        for (const sh of schoolsToSeed) {
          setSeedStep(`Semeando ${sh.name}...`);
@@ -116,6 +124,14 @@ export default function AdminUsers() {
     }
 
     setLoading(true);
+
+    // Check if on Vercel or other external host
+    if (window.location.hostname.includes('vercel.app')) {
+      alert('ERRO: A criação de usuários requer o servidor de backend. Por favor, use o link de DESENVOLVIMENTO do AI Studio (URL .run.app).');
+      setLoading(false);
+      return;
+    }
+
     const apiUrl = '/api/admin/create-user';
     console.log(`[Equipe] Chamando API: ${apiUrl}`);
 
