@@ -14,7 +14,17 @@ export type LeadStatus = 'Pendente' | 'Contatado' | 'Matriculado' | 'Desistente'
 export interface School {
   id: string;
   name: string;
+  codFilial: number;
+  cnpj: string;
+  cep?: string;
+  address?: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
   city: string;
+  uf: string;
+  email?: string;
+  phone?: string;
   active: boolean;
   courseIds?: string[];
 }

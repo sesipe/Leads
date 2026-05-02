@@ -45,12 +45,21 @@ export default function AdminUsers() {
     }
 
     setLoading(true);
+    const apiUrl = '/api/admin/create-user';
+    console.log(`[Equipe] Chamando API: ${apiUrl}`);
+
     try {
-      const response = await fetch('/api/admin/create-user', {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newUser)
       });
+
+      console.log(`[Equipe] Status da Resposta: ${response.status}`);
+
+      if (response.status === 405) {
+        throw new Error("O servidor não permitiu esta operação (405). Certifique-se de estar usando o link de 'Development App' do AI Studio.");
+      }
 
       let result;
       const contentType = response.headers.get("content-type");
