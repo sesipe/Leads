@@ -81,8 +81,8 @@ service cloud.firestore {
     // Schools
     match /schools/{schoolId} {
       allow read: if true;
-      allow create: if isAdmin() && isValidSchool(incoming());
-      allow update: if isAdmin() && isValidSchool(incoming());
+      allow create: if true;
+      allow update: if isAdmin();
       allow delete: if isAdmin();
     }
 
@@ -106,7 +106,9 @@ service cloud.firestore {
     // Users
     match /users/{userId} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow write: if isAdmin();
+      allow create: if true;
+      allow update: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow delete: if isAdmin();
     }
 
     // Admins

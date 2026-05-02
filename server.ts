@@ -94,14 +94,29 @@ async function startServer() {
       console.log(`[API] Auth user created: ${userRecord.uid}`);
 
       // 2. Create profile in Firestore
-      await db.collection('users').doc(userRecord.uid).set({
+      const profileData = {
         uid: userRecord.uid,
         email,
         name,
         role,
         schoolId: role === 'operator' ? schoolId : null,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+        createdAt: serverTimestamp(),
+      };
+
+      // Try Admin SDK first, fallback to Client SDK if needed
+      try {
+        await db.collection('users').doc(userRecord.uid).set({
+          ...profileData,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      } catch (dbErr) {
+        console.warn("[API] Admin SDK failed to write profile, trying Client SDK fallback...");
+        const firebaseConfigPath = path.resolve(process.cwd(), "firebase-applet-config.json");
+        const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+        const clientApp = initializeClientApp(firebaseConfig);
+        const clientDb = getClientFirestore(clientApp, firebaseConfig.firestoreDatabaseId);
+        await setDoc(doc(clientDb, 'users', userRecord.uid), profileData);
+      }
 
       console.log(`[API] Firestore profile created: ${userRecord.uid}`);
       res.json({ success: true, uid: userRecord.uid });
@@ -109,7 +124,15 @@ async function startServer() {
       console.error("[API] ERROR creating user:", error);
       
       let clientMessage = "Erro ao processar criação de usuário.";
-      if (error.code === 'auth/email-already-exists') clientMessage = "Este e-mail já está cadastrado.";
+      if (error.code === 'auth/email-already-exists') {
+        // If user exists, try to get their ID to return it
+        try {
+          const userRecord = await admin.auth().getUserByEmail(email);
+          return res.json({ success: true, uid: userRecord.uid, alreadyExisted: true });
+        } catch (e) {
+          clientMessage = "Este e-mail já está cadastrado.";
+        }
+      }
       if (error.code === 'auth/invalid-password') clientMessage = "A senha deve ter pelo menos 6 caracteres.";
       if (error.code === 'auth/invalid-email') clientMessage = "E-mail inválido.";
       
@@ -123,7 +146,26 @@ async function startServer() {
 
   // API Route: Seed Schools and Operators
   apiRouter.post("/admin/seed-schools", async (req, res) => {
-    if (!db) return res.status(500).json({ error: "Firebase Admin not initialized" });
+    console.log("[SEED] Iniciando processo de geração de contas escolares...");
+    
+    let clientDb: any = null;
+    try {
+      const firebaseConfigPath = path.resolve(process.cwd(), "firebase-applet-config.json");
+      if (fs.existsSync(firebaseConfigPath)) {
+        const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+        const clientApp = initializeClientApp(firebaseConfig);
+        clientDb = getClientFirestore(clientApp, firebaseConfig.firestoreDatabaseId);
+      }
+    } catch (e) {
+      console.error("[SEED] Erro ao carregar Client SDK:", e);
+    }
+
+    if (!db && !clientDb) {
+       return res.status(500).json({ 
+         success: false, 
+         error: "Firebase not initialized"
+       });
+    }
 
     const schoolsData = [
       { name: 'SESI Vasco da Gama', codFilial: 504, user: 'vascodagama' },
@@ -144,19 +186,26 @@ async function startServer() {
 
     for (const sh of schoolsData) {
       try {
+        console.log(`[SEED] Processando: ${sh.name}...`);
         const schoolId = sh.user;
         const userEmail = `${sh.user}@sistemafiepe.org.br`;
         const userPass = `${sh.user}@1234`;
         const schoolName = sh.name.replace(/SESI\s+/, '');
 
         // 1. Create/Update School Record
-        await db.collection('schools').doc(schoolId).set({
+        const schoolData = {
           id: schoolId,
           name: sh.name,
           codFilial: sh.codFilial,
           active: true,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
+          updatedAt: serverTimestamp()
+        };
+
+        if (clientDb) {
+          await setDoc(doc(clientDb, 'schools', schoolId), schoolData, { merge: true });
+        } else {
+          await db.collection('schools').doc(schoolId).set(schoolData, { merge: true });
+        }
 
         // 2. Create Auth User
         let uid = '';
@@ -174,26 +223,35 @@ async function startServer() {
             uid = existingUser.uid;
             results.push({ school: sh.name, status: 'already_existed', email: userEmail });
           } else {
-            throw authErr;
+            console.error(`[SEED] Auth error for ${sh.name}:`, authErr.message);
+            results.push({ school: sh.name, status: 'error_auth', error: authErr.message });
+            continue; 
           }
         }
 
         // 3. Create/Update User Profile
-        await db.collection('users').doc(uid).set({
+        const profileData = {
           uid,
           email: userEmail,
           name: schoolName,
           role: 'operator',
           schoolId: schoolId,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
+          createdAt: serverTimestamp(),
+        };
+
+        if (clientDb) {
+          await setDoc(doc(clientDb, 'users', uid), profileData, { merge: true });
+        } else {
+          await db.collection('users').doc(uid).set(profileData, { merge: true });
+        }
 
       } catch (err: any) {
-        console.error(`Error processing ${sh.name}:`, err.message);
+        console.error(`[SEED] General error for ${sh.name}:`, err.message);
         results.push({ school: sh.name, status: 'error', error: err.message });
       }
     }
 
+    console.log("[SEED] Processo concluído.");
     res.json({ success: true, results });
   });
 

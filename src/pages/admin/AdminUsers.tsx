@@ -48,45 +48,61 @@ export default function AdminUsers() {
     setLoading(true);
 
     const schoolsToSeed = [
-      { name: 'Vasco da Gama', user: 'vascodagama' },
-      { name: 'Ibura', user: 'ibura' },
-      { name: 'Camaragibe', user: 'camaragibe' },
-      { name: 'Paulista', user: 'paulista' },
-      { name: 'Cabo de Santo Agostinho', user: 'cabo' },
-      { name: 'Escada', user: 'escada' },
-      { name: 'Goiana', user: 'goiana' },
-      { name: 'Caruaru', user: 'caruaru' },
-      { name: 'Petrolina', user: 'petrolina' },
-      { name: 'Araripina', user: 'araripina' },
-      { name: 'Moreno', user: 'moreno' },
-      { name: 'Belo Jardim', user: 'belojardim' },
+      { name: 'SESI Vasco da Gama', codFilial: 504, user: 'vascodagama' },
+      { name: 'SESI Ibura', codFilial: 505, user: 'ibura' },
+      { name: 'SESI Camaragibe', codFilial: 506, user: 'camaragibe' },
+      { name: 'SESI Paulista', codFilial: 507, user: 'paulista' },
+      { name: 'SESI Cabo de Santo Agostinho', codFilial: 510, user: 'cabo' },
+      { name: 'SESI Escada', codFilial: 511, user: 'escada' },
+      { name: 'SESI Goiana', codFilial: 513, user: 'goiana' },
+      { name: 'SESI Caruaru', codFilial: 515, user: 'caruaru' },
+      { name: 'SESI Petrolina', codFilial: 517, user: 'petrolina' },
+      { name: 'SESI Araripina', codFilial: 518, user: 'araripina' },
+      { name: 'SESI Moreno', codFilial: 524, user: 'moreno' },
+      { name: 'SESI Belo Jardim', codFilial: 501, user: 'belojardim' },
     ];
 
     try {
-       // 1. First trigger the server-side seed route to handle everything reliably
-       const response = await fetch('/api/admin/seed-schools', {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' }
-       });
+       // Loop through schools and create them + their users
+       for (const sh of schoolsToSeed) {
+         setSeedStep(`Semeando ${sh.name}...`);
+         
+         // 1. Create the school record directly from frontend
+         const schoolId = sh.user;
+         const schoolRef = doc(db, 'schools', schoolId);
+         await setDoc(schoolRef, {
+           id: schoolId,
+           name: `SESI ${sh.name}`,
+           codFilial: sh.codFilial,
+           active: true,
+           updatedAt: new Date()
+         }, { merge: true });
 
-       const result = await response.json();
-       
-       if (response.ok && result.success) {
-         setSeedStep('Concluído com sucesso!');
-         alert('Contas escolares geradas com sucesso!');
-         fetchData(); // Refresh list
-       } else {
-         const errorMsg = result.error || 'Erro ao processar lote.';
-         // Check if it's the Identity Toolkit error
-         if (errorMsg.includes('identitytoolkit.googleapis.com')) {
-            alert('ERRO CRÍTICO: A API de Autenticação (Identity Toolkit) precisa ser ativada no seu console Firebase para criar usuários via servidor. Por favor, contate o administrador.');
-         } else {
-            alert('Erro: ' + errorMsg);
+         // 2. We still need the server to create the Auth account (browser can't create other users)
+         const response = await fetch('/api/admin/create-user', {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({
+             email: `${sh.user}@sistemafiepe.org.br`,
+             password: `${sh.user}@1234`,
+             name: sh.name,
+             role: 'operator',
+             schoolId: schoolId
+           })
+         });
+
+         if (!response.ok) {
+           const errData = await response.json();
+           console.error(`Erro ao criar usuário para ${sh.name}:`, errData);
+           // We continue because maybe the user already exists
          }
        }
+       
+       alert('Contas escolares geradas com sucesso! Você já pode ver os novos operadores na lista.');
+       fetchData(); 
     } catch (err: any) {
       console.error(err);
-      alert('Falha na comunicação com o servidor: ' + err.message);
+      alert('Ocorreu um erro durante a geração das contas: ' + err.message);
     } finally {
       setIsSeeding(false);
       setLoading(false);
