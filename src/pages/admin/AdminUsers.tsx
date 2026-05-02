@@ -80,7 +80,7 @@ export default function AdminUsers() {
          const schoolRef = doc(db, 'schools', schoolId);
          await setDoc(schoolRef, {
            id: schoolId,
-           name: `SESI ${sh.name}`,
+           name: sh.name,
            codFilial: sh.codFilial,
            active: true,
            updatedAt: new Date()

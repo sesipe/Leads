@@ -5,7 +5,7 @@ import { motion } from 'motion/react';
 import { Mail, Lock, Eye, EyeOff, ShieldUser } from 'lucide-react';
 
 export default function LoginPage() {
-  const { loginWithGoogle, loginWithEmail, user, isAdmin, isOperator, loading: authLoading } = useAuth();
+  const { loginWithEmail, user, isAdmin, isOperator, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState('');
@@ -39,25 +39,37 @@ export default function LoginPage() {
     }
   };
 
-  const handleGoogleLogin = async () => {
+
+
+  const handleInitialSetup = async () => {
     setLoading(true);
     setError(null);
     try {
-      await loginWithGoogle();
-    } catch (err: any) {
-      console.error("Erro no login:", err);
-      let message = "Falha na autenticação via Google.";
-      if (err.code === 'auth/popup-blocked') {
-        message = "O seu navegador bloqueou a janela de login. Por favor, abra o aplicativo em uma nova aba.";
+      const response = await fetch('/api/admin/setup-master', { method: 'POST' });
+      const data = await response.json();
+      if (data.success) {
+        alert('Administrador mestre configurado com sucesso! Agora você pode fazer login.');
+      } else {
+        throw new Error(data.error || 'Erro desconhecido');
       }
-      setError(message);
+    } catch (err: any) {
+      console.error(err);
+      setError('Falha ao configurar admin: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
 
+  const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]">
+      {isVercel && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 bg-yellow-50 border border-yellow-200 p-4 rounded-2xl shadow-xl z-50 max-w-md text-center">
+            <p className="text-yellow-800 text-[10px] font-black uppercase tracking-widest mb-1 italic">Acesso via Vercel Detectado</p>
+            <p className="text-yellow-700 text-xs font-medium">As funcionalidades administrativas e de banco de dados só funcionam no link de <span className="font-bold underline">Desenvolvimento do AI Studio</span> (.run.app). O Vercel serve apenas a parte visual estática.</p>
+        </div>
+      )}
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -131,22 +143,18 @@ export default function LoginPage() {
               {loading ? 'AUTENTICANDO...' : 'ENTRAR NO SISTEMA'}
             </button>
 
-            <div className="pt-4 flex flex-col items-center gap-4">
-               <div className="w-full flex items-center gap-4">
-                  <div className="h-[1px] bg-slate-100 flex-1"></div>
-                  <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">Ou acesse com</span>
-                  <div className="h-[1px] bg-slate-100 flex-1"></div>
-               </div>
+            {!isVercel && (
+              <div className="pt-2">
+                <button 
+                  type="button"
+                  onClick={handleInitialSetup}
+                  className="w-full py-3 rounded-[24px] border border-slate-100 font-bold text-[9px] uppercase tracking-widest text-slate-400 hover:bg-slate-50 transition-all"
+                >
+                  Configurar Acesso Inicial
+                </button>
+              </div>
+            )}
 
-               <button 
-                type="button"
-                onClick={handleGoogleLogin}
-                className="flex items-center justify-center gap-3 w-full py-4 rounded-2xl border border-slate-200 hover:bg-slate-50 transition-all font-bold text-slate-600 text-xs"
-              >
-                <img src="https://www.svgrepo.com/show/355037/google.svg" className="w-5 h-5" alt="Google" />
-                Conta Corporativa Google
-              </button>
-            </div>
           </form>
         </div>
 
